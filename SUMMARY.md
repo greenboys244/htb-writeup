@@ -2,3 +2,4 @@
 
 * [DevHub](README.md)
 * [Connected](connected.md)
+* [Checkpoint](checkpoint.md)
