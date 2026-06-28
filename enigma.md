@@ -249,4 +249,7 @@ cat /etc/OliveTin/config.yaml | grep "authRequireGuestsToLogin"
 ```
 {% endcode %}
 
-This is **gold**. OliveTin runs as **root**, has **no authentication required**
+This is **gold**. OliveTin runs as **root**, has **no authentication required, i start ligolo agent on this subnet to automaticcaly forward all ports 240.0.0.1/32**
+
+<figure><img src=".gitbook/assets/image (14).png" alt=""><figcaption></figcaption></figure>
+
