@@ -282,5 +282,102 @@ PublicKeyCredentialCreationOptions
 ```
 {% endcode %}
 
-**so i use the QWEN ai to build the script**&#x20;
+**so after deep searching on browser and understanding things i can setup i reverse proxy using to register and save a passkey on my browser then i will use it to authentificate**
+
+{% code overflow="wrap" %}
+```bash
+wget https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64
+chmod +x mkcert-v1.4.4-linux-amd64
+sudo mv mkcert-v1.4.4-linux-amd64 /usr/local/bin/mkcert
+mkcert aegis.korvia.htb
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+# reverse proxy setup
+sudo nano /etc/nginx/sites-available/aegis
+server {
+    listen 443 ssl;
+    server_name aegis.korvia.htb;
+
+    # Point to the exact paths where mkcert saved the files
+    ssl_certificate /home/gb05/Desktop/CPTS_PREP/aegis.korvia.htb.pem;
+    ssl_certificate_key /home/gb05/Desktop/CPTS_PREP/aegis.korvia.htb-key.pem;
+
+    location / {
+        proxy_pass http://10.129.45.250:3000;
+        # Ensure the backend still sees the correct hostname
+        proxy_set_header Host aegis.korvia.htb;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+sudo ln -s /etc/nginx/sites-available/aegis /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+{% endcode %}
+
+**Then on /etc/hosts change the ip to 127.0.0.1**&#x20;
+
+**Then reload the browser and it work**
+
+<figure><img src=".gitbook/assets/Capture d&#x27;écran 2026-07-03 000742.png" alt=""><figcaption></figcaption></figure>
+
+**click Next -> Save -> create a password for him on Manager Password for google -> Done**
+
+<figure><img src=".gitbook/assets/Capture d&#x27;écran 2026-07-03 000802.png" alt=""><figcaption></figcaption></figure>
+
+**Then it will redirect to login page click login**&#x20;
+
+<figure><img src=".gitbook/assets/image.png" alt=""><figcaption></figcaption></figure>
+
+**after fuzzing another time and crawling the app i found in the audit this**&#x20;
+
+| 2026-04-29 14:08 | admin | pruned 4 stale operator credentials (90d inactivity) |
+| ---------------- | ----- | ---------------------------------------------------- |
+
+{% hint style="info" %}
+**The admin deleted the WebAuthn hardware key bindings for 4 specific**
+
+**we have two attack vector we will test them both**&#x20;
+
+* **The "Stale Account" Takeover (Account Hijacking)**
+* **MongoDB Aggregation Pipeline Write**
+
+**So from here we know first that there is an admin role so we can assign this role to our operator user**&#x20;
+{% endhint %}
+
+**so also when seeing the blog we can update the DATA, however it doesnt work because when the stages to update its blacklisted.**
+
+**i spend time to understand the regiter logic and the login logic i found that when we register our ID is the same the name displayed but just in base64**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+"user":{"id":"b3AtMjAyNi0wMDQy","name":"op-2026-0042","displayName":"op-2026-0042"
+
+echo "b3AtMjAyNi0wMDQy" | base64 -d
+op-2026-0042
+```
+{% endcode %}
+
+**so i try on register to add the userHandle : "admin" but when i finish and i try registring with passkey i receive this error i tried many places change the ID first and add the entry in the finish register but it doesnt work so i tried to modify on the login/finish**&#x20;
+
+{% code overflow="wrap" %}
+```
+Authentication failed: OperatorNotFound: No active operator with handle 'admin 
+```
+{% endcode %}
+
+**then after in the login it work**
+
+<figure><img src=".gitbook/assets/Capture d&#x27;écran 2026-07-03 025831.png" alt=""><figcaption></figcaption></figure>
+
+<figure><img src=".gitbook/assets/image (39).png" alt=""><figcaption></figcaption></figure>
 
