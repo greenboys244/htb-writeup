@@ -122,4 +122,43 @@ https://makesense.htb/wp-content/ai-models/models/distilbart-cnn-12-6/onnx/encod
 ```
 {% endcode %}
 
-&#x20;
+&#x20;**i analyze this files but i cant find anything interesting, we know tha WP-7 lets confirm it**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+curl -k https://$target/wp-links-opml.php | grep "WordPress"
+# <!-- generator="WordPress/7.0" -->
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (57).png" alt=""><figcaption></figcaption></figure>
+
+<figure><img src=".gitbook/assets/image (58).png" alt=""><figcaption></figcaption></figure>
+
+{% code overflow="wrap" %}
+```
+https://makesense.htb//.gitignore it give some informations
+```
+{% endcode %}
+
+**after emunring all this and go on a rabbit hole  idsocver when i do an ai call and i register a request by audio it saved on the exposed uploaded directory**&#x20;
+
+<figure><img src=".gitbook/assets/image (59).png" alt=""><figcaption></figcaption></figure>
+
+**so the main idea is webshell**
+
+**it doesnt work so i switch to enumrate deeply**
+
+{% code overflow="wrap" %}
+```bash
+curl -sk https://makesense.htb/ |  grep themes
+
+# var webagency_ajax = {"ajax_url":"https://makesense.htb/wp-admin/admin-ajax.php","nonce":"f3142630f4","theme_url":"https://makesense.htb/wp-content/themes/webagency","site_url":"https://makesense.htb"};
+
+feroxbuster -u https://makesense.htb/wp-content/themes/webagency/ -k -x onnx,json,bin,txt,php --scan-dir-listings
+
+# 301      GET        9l       28w      345c https://makesense.htb/wp-content/themes/webagency/assets => https://makesense.htb/wp-content/themes/webagency/assets/
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (60).png" alt=""><figcaption></figcaption></figure>
