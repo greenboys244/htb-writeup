@@ -314,7 +314,7 @@ keepass2 db.kdbx
 ```
 {% endcode %}
 
-<figure><img src=".gitbook/assets/image (1) (1).png" alt=""><figcaption></figcaption></figure>
+<figure><img src=".gitbook/assets/image (1) (1) (1).png" alt=""><figcaption></figcaption></figure>
 
 **Since in toolkit repos we have one user that is not migrated to central services we will login usign hsi creds**
 
