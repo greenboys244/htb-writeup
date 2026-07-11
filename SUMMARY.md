@@ -1,6 +1,7 @@
 # Table of contents
 
 * [DevHub](README.md)
+* [Paperwork](paperwork.md)
 * [Ghostlink](ghostlink.md)
 * [Odyssey](odyssey.md)
 * [MakeSense](makesense.md)
