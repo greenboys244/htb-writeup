@@ -7,7 +7,7 @@
 **Let's start off with a quick nmap scan.**
 
 ```bash
-ip=10.129.45.122
+ip=10.129.45.164
 
 ## TCP Scan
 nmap -p- --min-rate 10000 -n -Pn -oA nmap/paperwork_tcp.htb $ip
