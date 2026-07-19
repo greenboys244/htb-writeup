@@ -7,7 +7,7 @@
 **Let's start off with a quick nmap scan.**
 
 ```bash
-ip=10.129.49.252
+ip=10.129.50.75
 
 ## TCP Scan
 nmap -p- --min-rate 10000 -n -Pn -oA nmap/bedside_tcp.htb $ip
@@ -70,3 +70,5 @@ DEFAULT_SIZE=$(curl -s -o /dev/null -w "%{size_download}" http://bedside.htb) &&
 {% endcode %}
 
 <mark style="color:blue;">**Step 4**</mark>&#x20;
+
+**we have an upload functionnality lets try to upload a php webshell**
