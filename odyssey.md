@@ -1973,11 +1973,11 @@ upload /home/gb05/Desktop/CPTS_PREP/ADtools/SharpHound.exe
 
 <mark style="color:blue;">**Step 12**</mark>
 
-<figure><img src=".gitbook/assets/image (1).png" alt=""><figcaption></figcaption></figure>
+<figure><img src=".gitbook/assets/image (1) (1).png" alt=""><figcaption></figcaption></figure>
 
 **I think my next target is svc stream because he has DCSync on the domain we need to found how to pivot to him**&#x20;
 
-<figure><img src=".gitbook/assets/image (1) (1).png" alt=""><figcaption></figcaption></figure>
+<figure><img src=".gitbook/assets/image (1) (1) (1).png" alt=""><figcaption></figcaption></figure>
 
 **so we can query the DC server,**
 

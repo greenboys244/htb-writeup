@@ -413,7 +413,7 @@ root        1400  0.0  0.7 228488 30536 ?        S    10:59   0:01 php -S 127.0.
 
 **First thing lets forward to this port**&#x20;
 
-<figure><img src=".gitbook/assets/image.png" alt=""><figcaption></figcaption></figure>
+<figure><img src=".gitbook/assets/image (1).png" alt=""><figcaption></figcaption></figure>
 
 **Logging using walter creds**
 
